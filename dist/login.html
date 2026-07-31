@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login &mdash; ZVIDAMBANO</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link rel="icon" type="image/jpeg" href="logo.jpeg" />
+  <style>
+    /* Mobile-first login redesign */
+    .login-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+    .login-topbar, .login-ticker, .login-header { display: none; }
+
+    .login-card {
+      flex: 1; display: flex; flex-direction: column; justify-content: center;
+      padding: 24px 20px 32px; max-width: 100%; margin: 0 auto; width: 100%;
+    }
+    .login-logo--mobile { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 28px; }
+    .login-logo--mobile .logo-icon-img { width: 40px; height: 40px; border-radius: 10px; }
+    .login-logo--mobile .logo-text { font-size: 1.25rem; font-weight: 800; color: var(--c-text); letter-spacing: -.02em; }
+
+    .login-hero { display: none; }
+
+    .login-title { font-size: 1.625rem; font-weight: 800; text-align: center; letter-spacing: -.025em; line-height: 1.2; color: var(--c-text); }
+    .login-subtitle { font-size: .875rem; color: var(--c-text-2); text-align: center; margin-top: 6px; margin-bottom: 28px; line-height: 1.5; }
+
+    .login-field { margin-bottom: 16px; }
+    .login-field label { font-size: .8125rem; font-weight: 600; color: var(--c-text); margin-bottom: 6px; }
+    .login-field input {
+      width: 100%; padding: 14px 16px; border: 1.5px solid var(--c-border);
+      border-radius: 10px; font-size: 1rem; font-family: var(--font);
+      background: var(--c-bg); color: var(--c-text);
+      transition: border-color .2s, box-shadow .2s;
+      -webkit-appearance: none; appearance: none;
+    }
+    .login-field input:focus { outline: none; border-color: var(--c-primary); box-shadow: 0 0 0 3px rgba(5,150,105,.12); }
+
+    .login-options { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .login-remember { display: flex; align-items: center; gap: 8px; font-size: .8125rem; color: var(--c-text-2); cursor: pointer; }
+    .login-remember input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--c-primary); cursor: pointer; }
+    .login-forgot { font-size: .8125rem; color: var(--c-primary); font-weight: 600; text-decoration: none; }
+    .login-forgot:hover { text-decoration: underline; }
+
+    .login-submit {
+      width: 100%; padding: 15px; background: var(--c-primary); color: #fff;
+      border: none; border-radius: 10px; font-size: 1rem; font-weight: 700;
+      font-family: var(--font); cursor: pointer; transition: all .2s;
+      letter-spacing: -.01em;
+    }
+    .login-submit:hover { background: #047857; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(5,150,105,.3); }
+    .login-submit:active { transform: translateY(0); }
+
+    .login-divider { display: flex; align-items: center; gap: 14px; margin: 28px 0; color: var(--c-text-3); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; font-weight: 500; }
+    .login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--c-border); }
+
+    .login-footer { text-align: center; font-size: .8125rem; color: var(--c-text-2); padding-bottom: env(safe-area-inset-bottom, 0); }
+    .login-footer a { color: var(--c-primary); font-weight: 600; text-decoration: none; }
+    .login-footer a:hover { text-decoration: underline; }
+
+    .login-quick-title { font-size: .8125rem; font-weight: 600; color: var(--c-text-2); text-align: center; margin: 0 0 14px; letter-spacing: -.005em; }
+    .login-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 28px; }
+    .login-role-card {
+      display: flex; flex-direction: column; gap: 4px; padding: 16px 14px;
+      border: 1.5px solid var(--c-border); border-radius: 14px; text-decoration: none;
+      background: var(--c-bg); transition: all .2s; min-width: 0;
+    }
+    .login-role-card:hover { border-color: var(--c-primary); box-shadow: 0 6px 18px rgba(5,150,105,.12); transform: translateY(-2px); }
+    .login-role-icon {
+      width: 38px; height: 38px; border-radius: 10px; background: rgba(5,150,105,.1);
+      color: var(--c-primary); display: flex; align-items: center; justify-content: center; margin-bottom: 6px;
+    }
+    .login-role-icon svg { width: 20px; height: 20px; }
+    .login-role-name { font-size: .875rem; font-weight: 700; color: var(--c-text); letter-spacing: -.01em; }
+    .login-role-desc { font-size: .6875rem; color: var(--c-text-2); }
+
+    /* Tablet */
+    @media (min-width: 600px) {
+      .login-card { max-width: 420px; padding: 40px 32px; }
+      .login-title { font-size: 1.75rem; }
+    }
+
+    /* Desktop */
+    @media (min-width: 960px) {
+      .login-page { flex-direction: row; min-height: calc(100vh - 200px); }
+      .login-topbar, .login-ticker, .login-header { display: block; }
+      .login-hero { display: block; flex: 1; position: relative; overflow: hidden; }
+      .login-hero img { width: 100%; height: 100%; object-fit: cover; }
+      .login-hero-overlay { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(5,150,105,.92), rgba(4,120,87,.88)); display: flex; align-items: flex-end; padding: 48px; }
+      .login-hero-content { color: #fff; max-width: 400px; }
+      .login-hero-content h2 { font-size: 2rem; font-weight: 800; margin-bottom: 12px; line-height: 1.15; }
+      .login-hero-content p { font-size: .9375rem; line-height: 1.6; opacity: .85; }
+      .login-hero-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
+      .login-hero-logo .logo-icon-img { width: 36px; height: 36px; border-radius: 8px; }
+      .login-hero-logo .logo-text { color: #fff; font-size: 1.125rem; font-weight: 700; }
+      .login-card { max-width: 480px; border-radius: 0; box-shadow: none; padding: 48px 40px; justify-content: center; }
+      .login-logo--mobile { display: none; }
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/styles-B_rwOSkn.js"></script>
+  <script type="module" crossorigin src="/assets/main-D4q4BI0A.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/styles-XZsAJxKk.css">
+  <link rel="stylesheet" crossorigin href="/assets/main-hs1GMtJq.css">
+</head>
+<body>
+  <a href="#main" class="skip-link">Skip to main content</a>
+
+  <div class="top-bar login-topbar">
+    <div class="container top-bar-inner">
+      <span>Mon&ndash;Fri 08:00&ndash;17:00</span>
+      <span>info@zvida.co.zw</span>
+      <div class="top-bar-links">
+        <a href="#support">Support</a>
+        <span class="divider">|</span>
+        <a href="#partner-portal">Partner Portal</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="ticker-wrap login-ticker">
+    <div class="ticker" id="ticker">
+      <div class="ticker-item"><span class="ticker-name">Maize</span><span class="ticker-price">$365</span><span class="ticker-old">$380</span></div>
+      <div class="ticker-item"><span class="ticker-name">Wheat</span><span class="ticker-price">$520</span><span class="ticker-old">$540</span></div>
+      <div class="ticker-item"><span class="ticker-name">Soya Beans</span><span class="ticker-price">$620</span><span class="ticker-old">$645</span></div>
+      <div class="ticker-item"><span class="ticker-name">Sugar Beans</span><span class="ticker-price">$680</span><span class="ticker-old">$710</span></div>
+      <div class="ticker-item"><span class="ticker-name">Ground Nuts</span><span class="ticker-price">$2.30</span><span class="ticker-old">$2.60</span></div>
+      <div class="ticker-item"><span class="ticker-name">Rice</span><span class="ticker-price">$780</span><span class="ticker-old">$810</span></div>
+      <div class="ticker-item"><span class="ticker-name">Maize</span><span class="ticker-price">$365</span><span class="ticker-old">$380</span></div>
+      <div class="ticker-item"><span class="ticker-name">Wheat</span><span class="ticker-price">$520</span><span class="ticker-old">$540</span></div>
+      <div class="ticker-item"><span class="ticker-name">Soya Beans</span><span class="ticker-price">$620</span><span class="ticker-old">$645</span></div>
+      <div class="ticker-item"><span class="ticker-name">Sugar Beans</span><span class="ticker-price">$680</span><span class="ticker-old">$710</span></div>
+      <div class="ticker-item"><span class="ticker-name">Ground Nuts</span><span class="ticker-price">$2.30</span><span class="ticker-old">$2.60</span></div>
+      <div class="ticker-item"><span class="ticker-name">Rice</span><span class="ticker-price">$780</span><span class="ticker-old">$810</span></div>
+    </div>
+  </div>
+
+  <header class="header login-header" id="header">
+    <div class="container header-inner">
+      <a href="index.html" class="logo">
+        <img src="logo.jpeg" alt="" class="logo-icon-img" />
+        <span class="logo-text">ZVIDAMBANO</span>
+      </a>
+      <nav class="nav" id="nav">
+        <a href="about.html" class="nav-link">About</a>
+        <a href="products.html" class="nav-link">Products</a>
+        <a href="clients.html" class="nav-link">Key Clients</a>
+        <a href="insights.html" class="nav-link">Insights</a>
+        <a href="faq.html" class="nav-link">FAQ</a>
+        <a href="careers.html" class="nav-link">Careers</a>
+        <a href="contact.html" class="nav-link">Contact</a>
+      </nav>
+      <div class="header-actions">
+        <a href="login.html" class="btn btn-outline btn-sm">Login</a>
+        <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main id="main" class="login-page">
+    <div class="login-hero">
+      <img src="https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=800&q=80" alt="Golden wheat field at sunset" />
+      <div class="login-hero-overlay">
+        <div class="login-hero-content">
+          <div class="login-hero-logo">
+            <img src="logo.jpeg" alt="" class="logo-icon-img" />
+            <span class="logo-text">ZVIDAMBANO</span>
+          </div>
+          <h2>The Blind Principal Clearing House</h2>
+          <p>Connecting farmers to offtakers through verified partners &mdash; with grade-adjusted pricing and information firewalls that protect every party.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="login-card">
+      <div class="login-logo--mobile">
+        <img src="logo.jpeg" alt="" class="logo-icon-img" />
+        <span class="logo-text">ZVIDAMBANO</span>
+      </div>
+      <h1 class="login-title">Sign in to your account</h1>
+      <p class="login-subtitle">Access your dashboard and manage your operations</p>
+
+      <form data-form novalidate>
+        <div class="login-field ds-field">
+          <label for="email" class="ds-label">Email address</label>
+          <input type="email" id="email" name="email" class="ds-input" autocomplete="email" data-validate="required email" placeholder="you@example.com" />
+          <div class="ds-msg"></div>
+        </div>
+        <div class="login-field ds-field">
+          <label for="password" class="ds-label">Password</label>
+          <input type="password" id="password" name="password" class="ds-input" autocomplete="current-password" data-validate="required password" placeholder="Enter your password" />
+          <div class="ds-msg"></div>
+        </div>
+        <div class="login-options">
+          <label class="login-remember">
+            <input type="checkbox" /> Remember me
+          </label>
+          <a href="#" class="login-forgot">Forgot password?</a>
+        </div>
+        <button type="submit" class="login-submit">Sign In</button>
+      </form>
+
+      <div class="login-divider">Secure access</div>
+
+      <p class="login-quick-title">Platform access</p>
+      <p class="login-subtitle">Dashboard views have been removed from the experience.</p>
+
+      <p class="login-footer">Don't have an account? <a href="contact.html">Contact us</a></p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-brand">
+          <div class="logo logo--footer">
+            <img src="logo.jpeg" alt="" class="logo-icon-img" />
+            <span class="logo-text">ZVIDAMBANO</span>
+          </div>
+          <p class="footer-tagline">"Giving value to your harvest."</p>
+          <p class="footer-desc">Crop farming, livestock, processing, out-grower management, and training since 2020.</p>
+          <p class="footer-company">ZVIDAMBANO Traders (Private) Limited</p>
+        </div>
+        <div class="footer-links-group">
+          <h4>Company</h4>
+          <ul>
+            <li><a href="about.html">About</a></li>
+            <li><a href="products.html">Products</a></li>
+            <li><a href="clients.html">Key Clients</a></li>
+            <li><a href="insights.html">Insights</a></li>
+            <li><a href="faq.html">FAQ</a></li>
+            <li><a href="careers.html">Careers</a></li>
+            <li><a href="contact.html">Contact</a></li>
+          </ul>
+        </div>
+        <div class="footer-links-group">
+          <h4>Contact Person</h4>
+          <p class="footer-contact-name">Tafadzwa Clemence Chikombe</p>
+          <p>5417 Cranbrook, Ruwa, Zimbabwe</p>
+          <p><a href="mailto:clemencechikombe@gmail.com">clemencechikombe@gmail.com</a></p>
+          <p><a href="tel:+263776571481">+263 776 571 481</a></p>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>&copy; 2026 ZVIDAMBANO (Private) Limited. All rights reserved.</p>
+        <div class="footer-legal">
+          <a href="privacy.html">Privacy Policy</a>
+          <a href="terms.html">Terms of Service</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
