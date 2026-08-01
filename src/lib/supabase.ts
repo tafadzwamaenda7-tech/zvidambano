@@ -1,8 +1,10 @@
-import { createClient, SupabaseClient, Session } from '@supabase/supabase-js';
+import { createClient, SupabaseClient, Session, SupportedStorage } from '@supabase/supabase-js';
 
 // Initialize Supabase client
-const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
-const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+// NOTE: use import.meta.env (NOT process.env) so Vite statically replaces
+// VITE_* values into the production bundle.
+const supabaseUrl: string = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey: string = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn(
@@ -10,13 +12,65 @@ if (!supabaseUrl || !supabaseAnonKey) {
   );
 }
 
+/*
+ * "Remember me" support. The session is normally persisted to localStorage
+ * (survives browser restarts). When the user unchecks "Remember me" on the
+ * login screen we route session writes to sessionStorage instead, so the
+ * session dies with the tab. Reads fall back across both stores so an
+ * existing session is always found regardless of the current checkbox state.
+ */
+export const AUTH_STORAGE_KEY = 'zvida_auth';
+const REMEMBER_KEY = 'zvida_remember';
+
+export function getRemember(): boolean {
+  try {
+    return localStorage.getItem(REMEMBER_KEY) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+export function setRemember(remember: boolean): void {
+  try {
+    localStorage.setItem(REMEMBER_KEY, remember ? '1' : '0');
+  } catch {
+    /* ignore quota/private-mode errors */
+  }
+}
+
+const authStorage: SupportedStorage = {
+  getItem(key: string): string | Promise<string | null> | null {
+    try {
+      return localStorage.getItem(key) ?? sessionStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem(key: string, value: string): void {
+    try {
+      const store = getRemember() ? localStorage : sessionStorage;
+      store.setItem(key, value);
+    } catch {
+      /* ignore quota/private-mode errors */
+    }
+  },
+  removeItem(key: string): void {
+    try {
+      localStorage.removeItem(key);
+      sessionStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+
 export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     detectSessionInUrl: true,
     autoRefreshToken: true,
-    storageKey: 'zvida_auth',
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    storageKey: AUTH_STORAGE_KEY,
+    storage: typeof window !== 'undefined' ? authStorage : undefined,
   },
 });
 
@@ -25,7 +79,7 @@ export interface User {
   id: string;
   email: string;
   full_name: string;
-  role: 'farmer' | 'broker' | 'offtaker' | 'driver' | 'supplier' | 'admin' | 'compliance';
+  role: 'farmer' | 'broker' | 'offtaker' | 'driver' | 'supplier' | 'admin' | 'compliance' | 'support';
   phone?: string;
   avatar_url?: string;
   created_at: string;

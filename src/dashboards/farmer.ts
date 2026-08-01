@@ -1,4 +1,4 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments } from './core';
 import type { PillTone } from './core';
 
 wf('f-sched-882', {
@@ -400,7 +400,7 @@ const P = {
           badge: 'ACTIVE',
           badgeTone: 'green',
           open: '#sell',
-          meta: 'Hidden from your marketplace view.',
+          meta: 'Viewable by ZVIDA only.',
           foot: `${jsBtn('Edit', 'ghost sm', 'editListing', 'soya', 'Listing loaded into the form')}${btn('Pause', 'ghost sm', 'Listing paused', undefined, 'f-soya-list', 'pause')}`,
         })}
         ${itemCard({
@@ -420,7 +420,7 @@ const P = {
     label: 'Shop',
     icon: ICON.shop,
     title: 'Shop',
-    sub: 'Buy inputs from verified sellers',
+    sub: 'Buy inputs supplied by ZVIDA',
     render: () => `
       ${sec('Popular This Week')}
       <div class="dsh-gallery">
@@ -434,12 +434,12 @@ const P = {
         <div data-gallery-key="groundnuts">${img('groundnuts', 'lg')}</div>
       </div>
       ${sec('Input Store', marketQty() > 0 ? `Cart (${marketQty()})` : 'Cart', 'Opening cart', undefined, '#cart')}
-      ${field('Search', `<input class="dsh-input dsh-search2" data-mkt-search placeholder="Search inputs, sellers, categories…" />`)}
+      ${field('Search', `<input class="dsh-input dsh-search2" data-mkt-search placeholder="Search inputs, categories…" />`)}
       ${chips(['All', 'Fertilizer', 'Seeds', 'Chemicals', 'Stockfeed', 'Livestock', 'Equipment'], 0, 'shop')}
       <div class="dsh-shop-grid">
         ${marketCatalog().map((p) => marketProductCard(p, 'shop')).join('')}
       </div>
-      <div style="font-size:12px;color:var(--dsh-text-3);margin-top:18px">ZVIDA-verified sellers only. Your own grain listings are hidden here — manage them under Sell.</div>
+      <div style="font-size:12px;color:var(--dsh-text-3);margin-top:18px">Every input is supplied and verified by ZVIDA. Your own grain listings are hidden here — manage them under Sell.</div>
     `,
   },
   cart: {
@@ -459,7 +459,7 @@ const P = {
       const total = subtotal + 12;
       return `
       ${kpis([
-        { label: 'Items', value: marketQty(), icon: ICON.shop, delta: 'Verified sellers only', up: true, spark: [1, 2, 2, 3, 2, 3, 3], foot: 'Across 3 stores', open: '#shop' },
+        { label: 'Items', value: marketQty(), icon: ICON.shop, delta: 'Supplied by ZVIDA', up: true, spark: [1, 2, 2, 3, 2, 3, 3], foot: 'Across 3 stores', open: '#shop' },
         { label: 'Subtotal', value: marketMoney(subtotal), icon: ICON.wallet, delta: 'Input costs', up: true, spark: [20, 30, 40, 60, 80, 100, 120], foot: 'Before delivery', open: '#checkout' },
         { label: 'Available Credit', value: '$50,000', icon: ICON.finance, delta: 'Line of credit', up: true, spark: [40, 40, 42, 42, 44, 44, 50], foot: 'Against warehouse receipts', open: '#finance' },
       ])}
@@ -480,7 +480,7 @@ const P = {
               { label: 'Delivery', value: '$12.00' },
               { label: 'Total', value: marketMoney(total) },
             ])}
-            ${banner('ok', 'Delivery to Farm 42, Ruwa by <b>Saturday</b>. ZVIDA-backed sellers only.')}
+            ${banner('ok', 'Delivery to Farm 42, Ruwa by <b>Saturday</b>. Handled by ZVIDA, start to finish.')}
             <div class="dsh-btn-row full">${btn('Proceed to Checkout', 'primary', 'Opening checkout', '#checkout')}</div>`,
         })}
       `)}
@@ -547,7 +547,7 @@ const P = {
               { label: 'Delivery', value: '$12.00' },
               { label: 'Total', value: marketMoney(marketSubtotal() + 12) },
             ])}
-            <div class="dsh-btn-row full">${jsBtn('Confirm & Place Order', 'primary', 'marketPlace', '', 'Order placed — seller notified')}</div>`,
+            <div class="dsh-btn-row full">${jsBtn('Confirm & Place Order', 'primary', 'marketPlace', '', 'Order placed — ZVIDA is on it')}</div>`,
         })}
       `)}
       </div>
@@ -563,7 +563,7 @@ const P = {
     render: () => {
       const last = marketLastOrder();
       return `
-      ${banner('ok', `${last ? last.ref : 'Your order'} was placed. The sellers have been notified and will confirm shortly.`)}
+      ${banner('ok', `${last ? last.ref : 'Your order'} was placed. ZVIDA has received it and will confirm shortly.`)}
       ${panel({
         title: last ? `Reference ${last.ref}` : 'Reference #C-2210',
         icon: ICON.check,
@@ -595,7 +595,7 @@ const P = {
       const orders = marketOrders().filter((o) => o.buyer.startsWith('James') || o.buyer === 'James (Farmer)');
       const active = orders.filter((o) => !['DELIVERED', 'CANCELLED', 'ESCALATED'].includes(o.status)).length;
       return `
-      ${banner('info', `${active} active ${active === 1 ? 'order' : 'orders'} in progress. Sellers confirm within 24 hours.`, 'Go shopping', 'Opening the input store', '#shop')}
+      ${banner('info', `${active} active ${active === 1 ? 'order' : 'orders'} in progress. ZVIDA confirms within 24 hours.`, 'Go shopping', 'Opening the input store', '#shop')}
       ${sec('Your Orders', 'Shop more', 'Opening the input store', orders.length, '#shop')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete'], 0, 'orders')}
       ${orders.length === 0 ? panel({ title: 'No orders yet', icon: ICON.orders, body: banner('info', 'When you place an order it will appear here.', 'Browse the shop', 'Opening the input store', '#shop') }) : ''}
@@ -635,6 +635,14 @@ const P = {
       })}
     `;
     },
+  },
+  documents: {
+    id: 'documents',
+    label: 'Documents',
+    icon: ICON.file,
+    title: 'Documents',
+    sub: 'Purchase orders, delivery notes, invoices & receipts',
+    render: () => zdocDocuments('supplier', 'James'),
   },
   finance: {
     id: 'finance',
@@ -710,7 +718,7 @@ const P = {
         { label: 'On-time Rate', value: 100, icon: ICON.shield, delta: 'Across 12 deals', up: true, spark: [90, 95, 92, 96, 98, 97, 100], foot: '% of deliveries', open: '#perf' },
         { label: 'ZVIDA Score', value: 92, icon: ICON.spark, delta: 'Top 10% of suppliers', up: true, spark: [80, 84, 82, 88, 90, 88, 92], foot: 'Out of 100', open: '#perf' },
         { label: 'Dispute-free Deals', value: 12, icon: ICON.check, delta: 'No open disputes', up: true, spark: [8, 9, 10, 10, 11, 11, 12], foot: 'Out of 12 deals', open: '#perf' },
-        { label: 'Avg Buyer Rating', value: '4.9', icon: ICON.quality, delta: '2 buyer ratings', up: true, spark: [10, 20, 30, 40, 42, 46, 49], foot: 'Out of 5.0', open: '#perf' },
+        { label: 'Avg Deal Rating', value: '4.9', icon: ICON.quality, delta: '2 deal ratings', up: true, spark: [10, 20, 30, 40, 42, 46, 49], foot: 'Out of 5.0', open: '#perf' },
       ])}
       ${split(`
         ${sec('Delivery Track Record')}
@@ -748,7 +756,7 @@ const P = {
             </div>`,
         })}
         ${panel({
-          title: 'Buyer Ratings',
+          title: 'Deal Ratings',
           icon: ICON.quality,
           body: `
             ${listRow(ICON.quality, 'Miller Corp', '12 loads · Always on time', '5.0', 'pos')}
@@ -858,5 +866,11 @@ boot({
   accentLight: '#ecfdf5',
   accentRgb: '5, 150, 105',
   gradientEnd: '#10b981',
-  pages: [P.today, P.sell, P.shop, P.orders, P.cart, P.checkout, P['order-confirmed'], P.contracts, P.finance, P.perf, P.farm, P.messages],
+  pages: [P.today, P.sell, P.shop, P.orders, P.cart, P.checkout, P['order-confirmed'], P.contracts, P.documents, P.finance, P.perf, P.farm, P.messages],
+  navGroups: [
+    { label: 'Overview', pages: ['today', 'sell', 'shop', 'orders'] },
+    { label: 'Contracts', pages: ['contracts', 'finance'] },
+    { label: 'My Farm', pages: ['farm', 'perf'] },
+    { label: 'Account', pages: ['documents', 'messages'] },
+  ],
 });

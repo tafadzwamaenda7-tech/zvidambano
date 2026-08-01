@@ -1,6 +1,35 @@
 import { supabase, getCurrentUser, signUp, signIn, signOut, onAuthChange as onSupabaseAuthChange } from './supabase';
+import { signupError, magicLinkError } from './auth-errors';
+import { logAuthEvent } from './auth-audit';
 
 export { onAuthChange } from './supabase';  // Re-export for convenience
+
+/**
+ * Metadata captured by the 5-step signup wizard. The handle_new_user trigger
+ * persists the whole raw_user_meta_data blob into public.users.profile, so the
+ * role-specific keys (farmName, companyCapacity, storeCategories, …) plus the
+ * documents/consent objects are stored verbatim.
+ */
+export interface SignupMetadata {
+  title?: string;
+  initials?: string;
+  middleName?: string;
+  dob?: string;
+  gender?: string;
+  idType?: string;
+  idNumber?: string;
+  nationality?: string;
+  address1?: string;
+  address2?: string;
+  city?: string;
+  province?: string;
+  country?: string;
+  telephone?: string;
+  phone?: string;
+  documents?: Record<string, { name: string; size: number; type: string } | null>;
+  consent?: { trading: boolean; analytics: boolean; terms: boolean };
+  [key: string]: unknown;
+}
 
 export interface AuthState {
   isAuthenticated: boolean;
@@ -90,6 +119,7 @@ export async function login(email: string, password: string): Promise<boolean> {
       error: null,
     };
 
+    await logAuthEvent({ event_type: 'login_success', email, user_id: user.id, role: profile?.role || undefined });
     return true;
   } catch (error) {
     authState = {
@@ -99,58 +129,102 @@ export async function login(email: string, password: string): Promise<boolean> {
       loading: false,
       error: error instanceof Error ? error.message : 'Login failed',
     };
+    await logAuthEvent({ event_type: 'login_failure', email, metadata: { error: authState.error || undefined } });
     return false;
   }
+}
+
+export interface SendMagicLinkResult {
+  ok: boolean;
+  error: string | null;
+}
+
+/**
+ * Sends a passwordless sign-in link for an existing account. Uses
+ * shouldCreateUser:false so unknown emails are never auto-registered.
+ */
+export async function sendMagicLink(email: string): Promise<SendMagicLinkResult> {
+  const { error } = await supabase.auth.signInWithOtp({
+    email,
+    options: {
+      shouldCreateUser: false,
+      emailRedirectTo: `${window.location.origin}/login.html`,
+    },
+  });
+  if (error) {
+    await logAuthEvent({ event_type: 'magic_link_failure', email, metadata: { error: error.message } });
+    return { ok: false, error: magicLinkError(error.message) };
+  }
+  await logAuthEvent({ event_type: 'magic_link_sent', email });
+  return { ok: true, error: null };
+}
+
+export interface RegisterResult {
+  ok: boolean;
+  needsConfirmation: boolean;
+  error: string | null;
+  action?: 'sign-in';
 }
 
 export async function register(
   email: string,
   password: string,
   fullName: string,
-  role: string
-): Promise<boolean> {
+  role: string,
+  metadata: SignupMetadata = {}
+): Promise<RegisterResult> {
   authState.loading = true;
   authState.error = null;
 
   try {
-    const { user } = await signUp(email, password, { full_name: fullName, role });
+    const { user, session } = await signUp(email, password, { full_name: fullName, role, ...metadata });
 
     if (!user) {
       throw new Error('Signup failed: No user returned');
     }
 
-    // Create user profile in users table
-    const { error: profileError } = await supabase.from('users').insert([
-      {
-        id: user.id,
-        email,
-        full_name: fullName,
-        role,
-      },
-    ]);
+    // The public.users profile is auto-created by the handle_new_user
+    // trigger on auth.users — no manual insert needed here.
 
-    if (profileError) {
-      throw profileError;
+    if (session) {
+      authState = {
+        isAuthenticated: true,
+        user,
+        role,
+        loading: false,
+        error: null,
+      };
+      await logAuthEvent({ event_type: 'signup_success', email, user_id: user.id, role });
+      return { ok: true, needsConfirmation: false, error: null };
     }
 
-    authState = {
-      isAuthenticated: true,
-      user,
-      role,
-      loading: false,
-      error: null,
-    };
-
-    return true;
-  } catch (error) {
+    // Email confirmation is required — no session until the link is clicked.
     authState = {
       isAuthenticated: false,
       user: null,
       role: null,
       loading: false,
-      error: error instanceof Error ? error.message : 'Signup failed',
+      error: null,
     };
-    return false;
+    await logAuthEvent({ event_type: 'signup_success', email, user_id: user.id, role });
+    return {
+      ok: false,
+      needsConfirmation: true,
+      error: 'Account created — please check your email to confirm your sign-up.',
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Signup failed';
+    const info = signupError(message);
+
+    authState = {
+      isAuthenticated: false,
+      user: null,
+      role: null,
+      loading: false,
+      error: info.message,
+    };
+    await logAuthEvent({ event_type: 'signup_failure', email, role, metadata: { error: message } });
+    return { ok: false, needsConfirmation: false, error: info.message, action: info.action === 'sign-in' ? 'sign-in' : undefined };
   }
 }
 

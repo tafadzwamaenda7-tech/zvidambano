@@ -3,252 +3,832 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Login &mdash; ZVIDAMBANO</title>
+  <title>Sign In &mdash; ZVIDAMBANO</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
   <link rel="icon" type="image/jpeg" href="logo.jpeg" />
   <link rel="stylesheet" href="src/styles.css" />
   <style>
-    /* Mobile-first login redesign */
-    .login-page { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
-    .login-topbar, .login-ticker, .login-header { display: none; }
+    /* ============================================================
+       ZVIDAMBANO AUTH — immersive, app-store grade
+       ============================================================ */
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; font-family: var(--font, 'Inter', system-ui, sans-serif); }
 
-    .login-card {
-      flex: 1; display: flex; flex-direction: column; justify-content: center;
-      padding: 24px 20px 32px; max-width: 100%; margin: 0 auto; width: 100%;
+    .skip-link { position: absolute; left: -9999px; z-index: 100; }
+    .skip-link:focus { left: 16px; top: 16px; padding: 10px 16px; background: #fff; color: #000; border-radius: 8px; }
+
+    .auth-page {
+      position: relative; min-height: 100vh; min-height: 100dvh;
+      display: grid; grid-template-columns: 1fr; overflow: hidden;
+      background: #0b2e24;
+      animation: authIn .5s ease;
     }
-    .login-logo--mobile { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 28px; }
-    .login-logo--mobile .logo-icon-img { width: 40px; height: 40px; border-radius: 10px; }
-    .login-logo--mobile .logo-text { font-size: 1.25rem; font-weight: 800; color: var(--c-text); letter-spacing: -.02em; }
+    @keyframes authIn { from { opacity: 0; } to { opacity: 1; } }
 
-    .login-hero { display: none; }
+    /* ---- Backdrop ---- */
+    .auth-backdrop { position: absolute; inset: 0; z-index: 0; overflow: hidden; }
+    .auth-backdrop::after {
+      content: ''; position: absolute; inset: 0; z-index: 1;
+      background: radial-gradient(130% 100% at 30% 20%, transparent 45%, rgba(3,15,12,.55) 100%);
+    }
+    .auth-backdrop-img {
+      position: absolute; inset: 0; background-size: cover; background-position: center;
+      background-image: url('grain-field-PPBX8RZ-1-1637x2048.jpg');
+      transition: opacity .55s ease;
+      animation: backdropDrift 26s ease-in-out infinite alternate;
+      will-change: transform;
+    }
+    .auth-backdrop-img.swapping { opacity: 0; }
+    @keyframes backdropDrift {
+      from { transform: scale(1) translateY(0); }
+      to { transform: scale(1.08) translateY(-1.5%); }
+    }
+    .auth-backdrop-scrim {
+      position: absolute; inset: 0;
+      background:
+        linear-gradient(102deg, rgba(6,32,25,.74) 0%, rgba(6,32,25,.4) 42%, rgba(6,32,25,.2) 62%, rgba(6,32,25,.58) 100%),
+        linear-gradient(0deg, rgba(4,20,16,.62) 0%, rgba(4,20,16,0) 42%);
+    }
+    .auth-backdrop-brand {
+      position: absolute; top: 28px; left: 32px; z-index: 2;
+      display: flex; align-items: center; gap: 12px; color: #fff;
+    }
+    .auth-backdrop-brand img { width: 38px; height: 38px; border-radius: 11px; box-shadow: 0 4px 18px rgba(0,0,0,.35); }
+    .auth-backdrop-brand .wordmark { font-size: 1.05rem; font-weight: 800; letter-spacing: -.01em; text-shadow: 0 2px 12px rgba(0,0,0,.4); }
+    .auth-backdrop-brand .wordmark small { display: block; font-size: .6rem; font-weight: 600; letter-spacing: .24em; text-transform: uppercase; opacity: .75; margin-top: 1px; }
 
-    .login-title { font-size: 1.625rem; font-weight: 800; text-align: center; letter-spacing: -.025em; line-height: 1.2; color: var(--c-text); }
-    .login-subtitle { font-size: .875rem; color: var(--c-text-2); text-align: center; margin-top: 6px; margin-bottom: 28px; line-height: 1.5; }
+    .auth-backdrop-caption {
+      position: absolute; left: 32px; bottom: 40px; right: 32px; z-index: 2; color: #fff;
+      max-width: 560px; transition: opacity .4s ease, transform .4s ease;
+    }
+    .auth-caption-kicker {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: .68rem; font-weight: 700; letter-spacing: .22em; text-transform: uppercase;
+      color: rgba(255,255,255,.85); margin-bottom: 14px;
+    }
+    .auth-caption-kicker::before { content: ''; width: 26px; height: 2px; border-radius: 2px; background: #34d399; }
+    .auth-caption-title { font-size: clamp(1.6rem, 3.2vw, 2.4rem); font-weight: 800; letter-spacing: -.03em; line-height: 1.12; margin: 0 0 10px; text-shadow: 0 4px 24px rgba(0,0,0,.35); }
+    .auth-caption-sub { font-size: .94rem; line-height: 1.6; color: rgba(255,255,255,.82); margin: 0; max-width: 440px; text-shadow: 0 2px 12px rgba(0,0,0,.3); }
 
-    .login-field { margin-bottom: 16px; }
-    .login-field label { font-size: .8125rem; font-weight: 600; color: var(--c-text); margin-bottom: 6px; }
-    .login-field input {
-      width: 100%; padding: 14px 16px; border: 1.5px solid var(--c-border);
-      border-radius: 10px; font-size: 1rem; font-family: var(--font);
-      background: var(--c-bg); color: var(--c-text);
-      transition: border-color .2s, box-shadow .2s;
+    /* ---- Card stage ---- */
+    .auth-stage { position: relative; z-index: 1; display: flex; align-items: center; justify-content: flex-end; padding: 24px; }
+
+    .auth-card {
+      width: 100%; max-width: 460px;
+      background: rgba(255,255,255,.9);
+      backdrop-filter: blur(26px) saturate(150%);
+      -webkit-backdrop-filter: blur(26px) saturate(150%);
+      border: 1px solid rgba(255,255,255,.65);
+      border-radius: 26px;
+      box-shadow: 0 32px 90px rgba(0,0,0,.35), 0 4px 18px rgba(0,0,0,.12);
+      padding: 36px 32px 28px;
+      max-height: calc(100vh - 48px); max-height: calc(100dvh - 48px);
+      overflow-y: auto;
+    }
+    .auth-card::-webkit-scrollbar { width: 0; }
+
+    /* Entrance + panel-switch motion */
+    .auth-card { animation: cardIn .55s cubic-bezier(.16,1,.3,1); }
+    @keyframes cardIn {
+      from { opacity: 0; transform: translateY(20px) scale(.985); }
+      to { opacity: 1; transform: none; }
+    }
+    .auth-panel { animation: panelIn .4s cubic-bezier(.16,1,.3,1); }
+    @keyframes panelIn {
+      from { opacity: 0; transform: translateY(14px); }
+      to { opacity: 1; transform: none; }
+    }
+    .auth-error:not([hidden]) { animation: errIn .32s ease; }
+    @keyframes errIn {
+      from { opacity: 0; transform: translateY(-5px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    /* Keyboard focus */
+    .auth-tab:focus-visible,
+    .auth-input:focus-visible,
+    .login-submit:focus-visible,
+    .login-back:focus-visible,
+    .login-forgot:focus-visible,
+    .auth-pw-toggle:focus-visible,
+    .auth-role-card:focus-visible {
+      outline: 2px solid #059669;
+      outline-offset: 2px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .auth-page, .auth-card, .auth-panel, .auth-error, .auth-backdrop-img { animation: none !important; }
+      .auth-backdrop-img { transition: none !important; }
+    }
+
+    .auth-card-brand { display: none; }
+
+    .auth-head { text-align: left; margin-bottom: 26px; }
+    .auth-head h1 { font-size: 1.45rem; font-weight: 800; letter-spacing: -.03em; color: #0f172a; margin: 0 0 6px; }
+    .auth-head p { font-size: .875rem; color: #64748b; margin: 0; line-height: 1.5; }
+
+    /* Segmented tabs */
+    .auth-tabs {
+      position: relative; display: flex; gap: 4px; padding: 4px; margin-bottom: 26px;
+      background: #eef2f7; border: 1px solid #e2e8f0; border-radius: 14px;
+    }
+    .auth-tab {
+      flex: 1; padding: 11px 12px; border: none; border-radius: 11px; font-family: inherit;
+      font-size: .875rem; font-weight: 700; color: #64748b; background: transparent;
+      cursor: pointer; transition: all .22s ease; position: relative; letter-spacing: -.01em;
+    }
+    .auth-tab.active {
+      background: #fff; color: #059669;
+      box-shadow: 0 3px 12px rgba(15,23,42,.10), inset 0 0 0 1px rgba(5,150,105,.18);
+    }
+
+    .auth-error {
+      display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; padding: 12px 14px; margin-bottom: 18px;
+      border-radius: 12px; border: 1px solid #fecaca; background: #fef2f2; color: #b91c1c;
+      font-size: .8125rem; line-height: 1.45; font-weight: 500;
+    }
+    .auth-error[hidden] { display: none; }
+    .auth-error svg { flex: none; width: 16px; height: 16px; margin-top: 1px; }
+    .auth-error [data-error-action] {
+      flex: 1 1 100%; margin-top: 6px; padding: 9px 12px; border-radius: 10px;
+      border: 1px solid #fecaca; background: #fff; color: #b91c1c;
+      font-size: .8125rem; font-weight: 700; font-family: inherit; cursor: pointer;
+      transition: all .2s; letter-spacing: -.01em;
+    }
+    .auth-error [data-error-action]:hover { background: #fee2e2; border-color: #fca5a5; }
+
+    /* Fields */
+    .auth-field { margin-bottom: 16px; }
+    .auth-field > label { display: block; font-size: .78rem; font-weight: 600; color: #334155; margin-bottom: 6px; letter-spacing: -.005em; }
+    .auth-input {
+      width: 100%; padding: 13px 15px; border: 1.5px solid #e2e8f0; border-radius: 12px;
+      font-size: .95rem; font-family: inherit; background: #fff; color: #0f172a;
+      transition: border-color .2s, box-shadow .2s, background .2s;
       -webkit-appearance: none; appearance: none;
     }
-    .login-field input:focus { outline: none; border-color: var(--c-primary); box-shadow: 0 0 0 3px rgba(5,150,105,.12); }
+    .auth-input::placeholder { color: #94a3b8; }
+    .auth-input:focus { outline: none; border-color: #059669; box-shadow: 0 0 0 4px rgba(5,150,105,.14); background: #fff; }
+    .auth-input.has-error { border-color: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,.1); }
+    .auth-input.has-ok { border-color: #22c55e; }
+    .auth-msg { font-size: .73rem; font-weight: 500; margin-top: 5px; line-height: 1.35; }
+    .auth-msg.err { color: #dc2626; }
+    .auth-msg.ok { color: #16a34a; }
+    .auth-msg.hint { color: #94a3b8; }
 
-    .login-options { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-    .login-remember { display: flex; align-items: center; gap: 8px; font-size: .8125rem; color: var(--c-text-2); cursor: pointer; }
-    .login-remember input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--c-primary); cursor: pointer; }
-    .login-forgot { font-size: .8125rem; color: var(--c-primary); font-weight: 600; text-decoration: none; }
+    .auth-pw { position: relative; }
+    .auth-pw .auth-input { padding-right: 46px; }
+    .auth-pw-toggle {
+      position: absolute; top: 50%; right: 7px; transform: translateY(-50%);
+      width: 32px; height: 32px; border: none; background: transparent; cursor: pointer;
+      border-radius: 9px; display: flex; align-items: center; justify-content: center;
+      color: #94a3b8; transition: all .2s;
+    }
+    .auth-pw-toggle:hover { color: #334155; background: #f1f5f9; }
+    .auth-pw-toggle svg { width: 18px; height: 18px; }
+
+    .auth-pw-gen {
+      position: absolute; top: 50%; right: 44px; transform: translateY(-50%);
+      height: 28px; padding: 0 10px; border: 1.5px solid #e2e8f0; background: #fff; cursor: pointer;
+      border-radius: 10px; display: flex; align-items: center; justify-content: center;
+      color: #059669; font-size: .72rem; font-weight: 700; font-family: inherit;
+      transition: all .2s;
+    }
+    .auth-pw-gen:hover { border-color: #059669; background: rgba(5,150,105,.05); }
+    .auth-pw-gen svg { width: 14px; height: 14px; margin-right: 4px; }
+    .auth-pw-gen:disabled { opacity: .5; cursor: not-allowed; }
+
+    .auth-caps {
+      display: flex; align-items: center; gap: 6px; margin-top: 6px;
+      font-size: .72rem; font-weight: 600; color: #b45309; letter-spacing: .01em;
+    }
+    .auth-caps[hidden] { display: none; }
+    .auth-caps::before {
+      content: ""; width: 8px; height: 8px; border-radius: 50%;
+      background: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.18);
+    }
+
+    .login-options { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .login-remember { display: flex; align-items: center; gap: 8px; font-size: .8125rem; color: #475569; cursor: pointer; }
+    .login-remember input[type="checkbox"] { width: 16px; height: 16px; accent-color: #059669; cursor: pointer; }
+    .login-forgot { font-size: .8125rem; color: #059669; font-weight: 600; text-decoration: none; border: none; background: none; cursor: pointer; font-family: inherit; padding: 0; }
     .login-forgot:hover { text-decoration: underline; }
 
     .login-submit {
-      width: 100%; padding: 15px; background: var(--c-primary); color: #fff;
-      border: none; border-radius: 10px; font-size: 1rem; font-weight: 700;
-      font-family: var(--font); cursor: pointer; transition: all .2s;
+      width: 100%; padding: 15px; background: #059669;
+      color: #fff; border: none; border-radius: 10px; font-size: .95rem; font-weight: 700;
+      font-family: inherit; cursor: pointer; transition: background .2s, transform .15s, box-shadow .2s;
       letter-spacing: -.01em;
     }
-    .login-submit:hover { background: #047857; transform: translateY(-1px); box-shadow: 0 4px 16px rgba(5,150,105,.3); }
-    .login-submit:active { transform: translateY(0); }
+    .login-submit:hover { background: #047857; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(5,150,105,.18); }
+    .login-submit:active { transform: translateY(0); box-shadow: none; }
+    .login-submit:disabled { opacity: .6; cursor: not-allowed; transform: none; box-shadow: none; }
 
-    .login-divider { display: flex; align-items: center; gap: 14px; margin: 28px 0; color: var(--c-text-3); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; font-weight: 500; }
-    .login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--c-border); }
+    .login-back {
+      width: 100%; padding: 14px; background: transparent; color: #475569;
+      border: 1.5px solid #cbd5e1; border-radius: 10px; font-size: .95rem; font-weight: 600;
+      font-family: inherit; cursor: pointer; transition: all .2s;
+    }
+    .login-back:hover { border-color: #059669; color: #059669; background: rgba(5,150,105,.04); }
+    .login-back:active { transform: translateY(0); }
 
-    .login-footer { text-align: center; font-size: .8125rem; color: var(--c-text-2); padding-bottom: env(safe-area-inset-bottom, 0); }
-    .login-footer a { color: var(--c-primary); font-weight: 600; text-decoration: none; }
+    .auth-wiz-nav { display: grid; grid-template-columns: 1fr 1.4fr; gap: 10px; margin-top: 22px; }
+
+    .login-footer { text-align: center; font-size: .8125rem; color: #64748b; padding-top: 20px; }
+    .login-footer a { color: #059669; font-weight: 600; text-decoration: none; }
     .login-footer a:hover { text-decoration: underline; }
 
-    .login-quick-title { font-size: .8125rem; font-weight: 600; color: var(--c-text-2); text-align: center; margin: 0 0 14px; letter-spacing: -.005em; }
-    .login-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 12px; margin-bottom: 28px; }
-    .login-role-card {
-      display: flex; flex-direction: column; gap: 4px; padding: 16px 14px;
-      border: 1.5px solid var(--c-border); border-radius: 14px; text-decoration: none;
-      background: var(--c-bg); transition: all .2s; min-width: 0;
+    .auth-divider { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; color: #94a3b8; font-size: .75rem; }
+    .auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: #e2e8f0; }
+    .login-magic-btn {
+      width: 100%; padding: 13px; background: #fff; color: #047857;
+      border: 1.5px solid #10b981; border-radius: 10px; font-size: .9rem; font-weight: 600;
+      font-family: inherit; cursor: pointer; transition: all .2s;
     }
-    .login-role-card:hover { border-color: var(--c-primary); box-shadow: 0 6px 18px rgba(5,150,105,.12); transform: translateY(-2px); }
+    .login-magic-btn:hover { background: #f0fdf4; border-color: #059669; }
+    .login-magic-btn:active { transform: translateY(0); }
+    .login-magic-btn:disabled { opacity: .6; cursor: not-allowed; }
+    .login-pw-field { transition: opacity .15s; }
+    .auth-magic-success { text-align: center; padding: 22px 8px 4px; color: #334155; }
+    .auth-magic-success svg { width: 46px; height: 46px; color: #059669; margin-bottom: 10px; }
+    .auth-magic-success h3 { margin: 0 0 8px; font-size: 1.1rem; color: #0f172a; }
+    .auth-magic-success p { margin: 0 0 16px; font-size: .875rem; line-height: 1.5; }
+    .auth-magic-success .login-submit { margin-top: 6px; }
+
+    /* Signup wizard */
+    .auth-steps { display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 22px; }
+    .auth-step-dot {
+      width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+      font-size: .75rem; font-weight: 700; color: #94a3b8; background: #eef2f7; transition: all .25s;
+    }
+    .auth-step-dot.active { background: #059669; color: #fff; box-shadow: 0 4px 14px rgba(5,150,105,.35); }
+    .auth-step-dot.done { background: #d1fae5; color: #065f46; }
+    .auth-step-line { width: 32px; height: 2px; border-radius: 2px; background: #e2e8f0; transition: background .25s; }
+    .auth-step-line.done { background: #34d399; }
+
+    .auth-wizard-step { animation: fadeIn .28s ease; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    .auth-roles { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 6px; }
+    .auth-role-card {
+      position: relative; display: flex; flex-direction: column; gap: 3px; padding: 16px 14px;
+      border: 1.5px solid #e2e8f0; border-radius: 16px; background: #fff; cursor: pointer;
+      transition: all .2s; font-family: inherit; text-align: left;
+    }
+    .auth-role-card:hover { border-color: #a7f3d0; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(5,150,105,.08); }
+    .auth-role-card.selected { border-color: #059669; background: linear-gradient(180deg, #f0fdf9, #fff); box-shadow: 0 0 0 3px rgba(5,150,105,.14); }
+    .auth-role-card .login-role-name { font-size: .9375rem; }
+    .auth-role-card .login-role-desc { line-height: 1.4; }
+    .auth-role-check {
+      position: absolute; top: 12px; right: 12px; width: 20px; height: 20px; border-radius: 50%;
+      border: 2px solid #cbd5e1; display: flex; align-items: center; justify-content: center; color: transparent; transition: all .2s;
+    }
+    .auth-role-check svg { width: 11px; height: 11px; }
+    .auth-role-card.selected .auth-role-check { background: #059669; border-color: #059669; color: #fff; }
+
     .login-role-icon {
-      width: 38px; height: 38px; border-radius: 10px; background: rgba(5,150,105,.1);
-      color: var(--c-primary); display: flex; align-items: center; justify-content: center; margin-bottom: 6px;
+      width: 38px; height: 38px; border-radius: 11px; background: rgba(5,150,105,.1);
+      color: #059669; display: flex; align-items: center; justify-content: center; margin-bottom: 6px;
     }
     .login-role-icon svg { width: 20px; height: 20px; }
-    .login-role-name { font-size: .875rem; font-weight: 700; color: var(--c-text); letter-spacing: -.01em; }
-    .login-role-desc { font-size: .6875rem; color: var(--c-text-2); }
+    .login-role-name { font-size: .875rem; font-weight: 700; color: #0f172a; letter-spacing: -.01em; }
+    .login-role-desc { font-size: .6875rem; color: #64748b; }
 
-    /* Tablet */
-    @media (min-width: 600px) {
-      .login-card { max-width: 420px; padding: 40px 32px; }
-      .login-title { font-size: 1.75rem; }
+    /* Password strength */
+    .pw-meter { display: flex; gap: 6px; margin: 8px 0 4px; }
+    .pw-meter span { flex: 1; height: 5px; border-radius: 3px; background: #e2e8f0; transition: background .25s; }
+    .pw-meter span.on { background: var(--pw-col, #ef4444); }
+    .pw-strength-label { font-size: .73rem; font-weight: 600; color: var(--pw-label, #94a3b8); }
+    .pw-reqs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 12px; margin: 10px 0 2px; }
+    .pw-req { display: flex; align-items: center; gap: 6px; font-size: .73rem; color: #94a3b8; }
+    .pw-req svg { width: 13px; height: 13px; flex: none; }
+    .pw-req.met { color: #16a34a; }
+
+    /* Extended wizard components */
+    .auth-wiz-title { text-align: center; font-size: .78rem; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #059669; margin: -14px 0 20px; }
+    .auth-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
+    .auth-field.span-2 { grid-column: 1 / -1; }
+    .auth-select { appearance: none; -webkit-appearance: none; background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; padding-right: 38px; cursor: pointer; }
+    .auth-select:focus { background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' fill='none' stroke='%23059669' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E"); }
+
+    .auth-note {
+      display: flex; align-items: flex-start; gap: 9px;
+      margin-top: 16px; padding: 12px 14px; border-radius: 12px;
+      background: #f0fdf9; border: 1px solid #a7f3d0; color: #065f46;
+      font-size: .8rem; line-height: 1.55; font-weight: 500;
+    }
+    .auth-note::before { content: ''; flex: none; width: 8px; height: 8px; border-radius: 50%; background: #10b981; margin-top: 5px; }
+    .auth-note-lock { background: #f8fafc; border-color: #e2e8f0; color: #475569; }
+    .auth-note-lock::before { background: #94a3b8; }
+
+    .auth-block-title { font-size: .8rem; font-weight: 800; color: #0f172a; letter-spacing: -.01em; margin: 22px 0 6px; display: flex; align-items: center; gap: 8px; }
+    .auth-block-title::before { content: ''; width: 4px; height: 16px; border-radius: 3px; background: linear-gradient(180deg, #34d399, #059669); }
+    .auth-block-title:first-child { margin-top: 0; }
+    .auth-block-note { font-size: .78rem; color: #64748b; line-height: 1.55; margin: 0 0 12px; }
+
+    .auth-consent {
+      display: flex; align-items: flex-start; gap: 10px; padding: 11px 13px; margin-bottom: 8px;
+      border: 1.5px solid #e2e8f0; border-radius: 12px; cursor: pointer; transition: all .2s;
+      font-size: .8125rem; line-height: 1.5; color: #334155; background: #fff;
+    }
+    .auth-consent:hover { border-color: #a7f3d0; }
+    .auth-consent:has(input:checked) { border-color: #059669; background: #f0fdf9; }
+    .auth-consent input { width: 18px; height: 18px; flex: none; margin-top: 1px; accent-color: #059669; cursor: pointer; }
+    .auth-consent a { color: #059669; font-weight: 600; }
+
+    .auth-doc {
+      margin-bottom: 12px; padding: 14px; border: 1.5px dashed #cbd5e1; border-radius: 14px;
+      background: #f8fafc; transition: all .2s;
+    }
+    .auth-doc:has(input:focus-visible) { border-color: #059669; }
+    .auth-doc-meta { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
+    .auth-doc-meta strong { font-size: .8125rem; color: #0f172a; }
+    .auth-doc-meta span { font-size: .73rem; color: #64748b; }
+    .auth-file {
+      width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #e2e8f0;
+      background: #fff; font-size: .8rem; color: #334155; cursor: pointer;
+    }
+    .auth-file::file-selector-button {
+      margin-right: 12px; padding: 8px 14px; border: none; border-radius: 10px;
+      background: #059669; color: #fff; font-weight: 700; font-size: .78rem; cursor: pointer; font-family: inherit;
+    }
+    .auth-doc-state { font-size: .73rem; color: #94a3b8; margin-top: 8px; }
+
+    .auth-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 2px 0 6px; }
+    .auth-chip { position: relative; cursor: pointer; }
+    .auth-chip input { position: absolute; opacity: 0; pointer-events: none; }
+    .auth-chip span {
+      display: inline-flex; align-items: center; gap: 6px; padding: 8px 13px;
+      border: 1.5px solid #e2e8f0; border-radius: 999px; font-size: .8rem; font-weight: 600;
+      color: #475569; background: #fff; transition: all .2s;
+    }
+    .auth-chip input:checked + span { border-color: #059669; background: #f0fdf9; color: #047857; box-shadow: 0 0 0 3px rgba(5,150,105,.12); }
+    .auth-chip input:focus-visible + span { outline: 2px solid #059669; outline-offset: 2px; }
+
+    .auth-gps { display: grid; grid-template-columns: 1fr auto; gap: 8px; }
+    .auth-gps-btn { width: auto; padding: 13px 14px; font-size: .8rem; white-space: nowrap; }
+
+    .auth-verify { text-align: center; padding-top: 6px; }
+    .auth-verify-icon {
+      width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 50%;
+      background: #d1fae5; color: #059669; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 10px 30px rgba(5,150,105,.22);
+    }
+    .auth-verify-icon svg { width: 30px; height: 30px; }
+    .auth-verify h3 { font-size: 1.15rem; font-weight: 800; color: #0f172a; margin: 0 0 8px; letter-spacing: -.02em; }
+    .auth-verify p { font-size: .875rem; color: #64748b; line-height: 1.6; margin: 0 0 18px; }
+    .auth-verify p strong { color: #0f172a; }
+    .auth-verify-status {
+      margin: 0 0 20px; padding: 14px 16px; border-radius: 14px; background: #f8fafc;
+      border: 1px solid #e2e8f0; text-align: left;
+    }
+    .auth-verify-status > div { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; font-size: .8125rem; }
+    .auth-verify-status .done { color: #334155; font-weight: 600; }
+    .auth-verify-status .state { font-size: .7rem; font-weight: 700; padding: 3px 9px; border-radius: 999px; }
+    .auth-verify-status .state.pending { color: #b45309; background: #fef3c7; }
+    .auth-verify-status .state.soon { color: #6b7280; background: #e5e7eb; }
+    .auth-verify-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    /* Forgot */
+    .forgot-note { font-size: .8125rem; color: #64748b; line-height: 1.6; text-align: center; margin-bottom: 20px; }
+
+    .auth-legal { margin-top: 22px; text-align: center; font-size: .72rem; color: #94a3b8; }
+    .auth-legal a { color: #94a3b8; text-decoration: none; }
+    .auth-legal a:hover { color: #059669; }
+
+    /* ============ Responsive ============ */
+    @media (min-width: 900px) {
+      .auth-page { grid-template-columns: 1fr minmax(0, 560px); }
+      .auth-stage { padding: 40px clamp(24px, 5vw, 64px) 40px clamp(16px, 3vw, 40px); }
+      .auth-backdrop-caption { left: clamp(28px, 5vw, 64px); bottom: 48px; right: auto; max-width: 520px; }
+      .auth-backdrop-brand { top: clamp(24px, 4vh, 44px); left: clamp(28px, 5vw, 64px); }
     }
 
-    /* Desktop */
-    @media (min-width: 960px) {
-      .login-page { flex-direction: row; min-height: calc(100vh - 200px); }
-      .login-topbar, .login-ticker, .login-header { display: block; }
-      .login-hero { display: block; flex: 1; position: relative; overflow: hidden; }
-      .login-hero img { width: 100%; height: 100%; object-fit: cover; }
-      .login-hero-overlay { position: absolute; inset: 0; background: linear-gradient(135deg, rgba(5,150,105,.92), rgba(4,120,87,.88)); display: flex; align-items: flex-end; padding: 48px; }
-      .login-hero-content { color: #fff; max-width: 400px; }
-      .login-hero-content h2 { font-size: 2rem; font-weight: 800; margin-bottom: 12px; line-height: 1.15; }
-      .login-hero-content p { font-size: .9375rem; line-height: 1.6; opacity: .85; }
-      .login-hero-logo { display: flex; align-items: center; gap: 10px; margin-bottom: 24px; }
-      .login-hero-logo .logo-icon-img { width: 36px; height: 36px; border-radius: 8px; }
-      .login-hero-logo .logo-text { color: #fff; font-size: 1.125rem; font-weight: 700; }
-      .login-card { max-width: 480px; border-radius: 0; box-shadow: none; padding: 48px 40px; justify-content: center; }
-      .login-logo--mobile { display: none; }
+    @media (max-width: 899px) {
+      .auth-page { display: block; overflow: visible; background: #f8fafc; }
+
+      /* Hero band: image + brand + caption fill the top, page scrolls below */
+      .auth-backdrop { position: relative; inset: auto; height: 42dvh; min-height: 250px; }
+      .auth-backdrop-scrim {
+        background: linear-gradient(180deg, rgba(6,32,25,.34) 0%, rgba(6,32,25,.08) 34%, rgba(6,32,25,.8) 100%);
+      }
+      .auth-backdrop-brand { top: 20px; left: 20px; }
+      .auth-backdrop-brand img { width: 34px; height: 34px; }
+      .auth-backdrop-brand .wordmark small {
+        max-width: 62vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .auth-backdrop-caption { left: 20px; right: 20px; bottom: 26px; max-width: none; }
+      .auth-caption-title { font-size: clamp(1.4rem, 6vw, 1.75rem); margin-bottom: 8px; }
+      .auth-caption-sub { font-size: .83rem; line-height: 1.5; max-width: 340px; }
+
+      /* Card overlaps the band and scrolls with the page */
+      .auth-stage { display: block; padding: 0; }
+      .auth-card {
+        width: 100%; max-width: none; max-height: none; overflow: visible;
+        border-radius: 26px 26px 0 0; margin-top: -26px;
+        padding: 28px 20px 24px;
+        background: #fff;
+        border: none;
+        box-shadow: 0 -14px 44px rgba(0,0,0,.18);
+      }
+      .auth-card-brand { display: none; }
+
+      .auth-head { text-align: left; margin-bottom: 22px; }
+      .auth-head h1 { font-size: 1.35rem; }
+      .auth-roles { gap: 10px; }
+      .auth-role-card { padding: 14px 12px; }
+      .login-footer { padding-bottom: 6px; }
+    }
+
+    @media (max-width: 480px) {
+      .auth-grid { grid-template-columns: 1fr; }
+      .auth-gps { grid-template-columns: 1fr; }
+      .auth-gps-btn { width: 100%; }
+      .auth-verify-actions { grid-template-columns: 1fr; }
+      .auth-consent { padding: 10px 11px; }
     }
   </style>
 </head>
 <body>
   <a href="#main" class="skip-link">Skip to main content</a>
 
-  <div class="top-bar login-topbar">
-    <div class="container top-bar-inner">
-      <span>Mon&ndash;Fri 08:00&ndash;17:00</span>
-      <span>info@zvida.co.zw</span>
-      <div class="top-bar-links">
-        <a href="#support">Support</a>
-        <span class="divider">|</span>
-        <a href="#partner-portal">Partner Portal</a>
+  <main id="main" class="auth-page">
+    <!-- Backdrop -->
+    <div class="auth-backdrop" aria-hidden="true">
+      <div class="auth-backdrop-img" data-bg-img></div>
+      <div class="auth-backdrop-scrim"></div>
+      <div class="auth-backdrop-brand">
+        <img src="logo.jpeg" alt="" />
+        <div class="wordmark">ZVIDAMBANO <small>Blind Principal Clearing House</small></div>
+      </div>
+      <div class="auth-backdrop-caption">
+        <div class="auth-caption-kicker">ZVIDAMBANO &middot; Grain Market</div>
+        <h2 class="auth-caption-title" data-caption-title>Grow. Trade. Trust.</h2>
+        <p class="auth-caption-sub" data-caption-sub>The verified way to buy and sell grain — grade-adjusted pricing and complete privacy, handled end to end by ZVIDA.</p>
       </div>
     </div>
-  </div>
 
-  <div class="ticker-wrap login-ticker">
-    <div class="ticker" id="ticker">
-      <div class="ticker-item"><span class="ticker-name">Maize</span><span class="ticker-price">$365</span><span class="ticker-old">$380</span></div>
-      <div class="ticker-item"><span class="ticker-name">Wheat</span><span class="ticker-price">$520</span><span class="ticker-old">$540</span></div>
-      <div class="ticker-item"><span class="ticker-name">Soya Beans</span><span class="ticker-price">$620</span><span class="ticker-old">$645</span></div>
-      <div class="ticker-item"><span class="ticker-name">Sugar Beans</span><span class="ticker-price">$680</span><span class="ticker-old">$710</span></div>
-      <div class="ticker-item"><span class="ticker-name">Ground Nuts</span><span class="ticker-price">$2.30</span><span class="ticker-old">$2.60</span></div>
-      <div class="ticker-item"><span class="ticker-name">Rice</span><span class="ticker-price">$780</span><span class="ticker-old">$810</span></div>
-      <div class="ticker-item"><span class="ticker-name">Maize</span><span class="ticker-price">$365</span><span class="ticker-old">$380</span></div>
-      <div class="ticker-item"><span class="ticker-name">Wheat</span><span class="ticker-price">$520</span><span class="ticker-old">$540</span></div>
-      <div class="ticker-item"><span class="ticker-name">Soya Beans</span><span class="ticker-price">$620</span><span class="ticker-old">$645</span></div>
-      <div class="ticker-item"><span class="ticker-name">Sugar Beans</span><span class="ticker-price">$680</span><span class="ticker-old">$710</span></div>
-      <div class="ticker-item"><span class="ticker-name">Ground Nuts</span><span class="ticker-price">$2.30</span><span class="ticker-old">$2.60</span></div>
-      <div class="ticker-item"><span class="ticker-name">Rice</span><span class="ticker-price">$780</span><span class="ticker-old">$810</span></div>
-    </div>
-  </div>
+    <!-- Card -->
+    <div class="auth-stage">
+      <div class="auth-card">
+        <div class="auth-card-brand">
+          <img src="logo.jpeg" alt="" />
+          <span>ZVIDAMBANO</span>
+        </div>
 
-  <header class="header login-header" id="header">
-    <div class="container header-inner">
-      <a href="index.html" class="logo">
-        <img src="logo.jpeg" alt="" class="logo-icon-img" />
-        <span class="logo-text">ZVIDAMBANO</span>
-      </a>
-      <nav class="nav" id="nav">
-        <a href="about.html" class="nav-link">About</a>
-        <a href="products.html" class="nav-link">Products</a>
-        <a href="clients.html" class="nav-link">Key Clients</a>
-        <a href="insights.html" class="nav-link">Insights</a>
-        <a href="faq.html" class="nav-link">FAQ</a>
-        <a href="careers.html" class="nav-link">Careers</a>
-        <a href="contact.html" class="nav-link">Contact</a>
-      </nav>
-      <div class="header-actions">
-        <a href="login.html" class="btn btn-outline btn-sm">Login</a>
-        <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
-          <span></span><span></span><span></span>
-        </button>
-      </div>
-    </div>
-  </header>
+        <div class="auth-head">
+          <h1 id="auth-title">Welcome back</h1>
+          <p id="auth-subtitle">Sign in to your dashboard to continue.</p>
+        </div>
 
-  <main id="main" class="login-page">
-    <div class="login-hero">
-      <img src="https://images.unsplash.com/photo-1625246333195-78d9c38ad449?w=800&q=80" alt="Golden wheat field at sunset" />
-      <div class="login-hero-overlay">
-        <div class="login-hero-content">
-          <div class="login-hero-logo">
-            <img src="logo.jpeg" alt="" class="logo-icon-img" />
-            <span class="logo-text">ZVIDAMBANO</span>
+        <div class="auth-tabs" role="tablist" aria-label="Account actions" data-auth-tabbar>
+          <button type="button" class="auth-tab active" id="tab-login" data-auth-tab="login" role="tab" aria-selected="true" aria-controls="panel-login">Sign In</button>
+          <button type="button" class="auth-tab" id="tab-signup" data-auth-tab="signup" role="tab" aria-selected="false" aria-controls="panel-signup">Create Account</button>
+        </div>
+
+        <div class="auth-error" id="auth-error" role="alert" aria-live="assertive" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          <span></span>
+        </div>
+
+        <!-- ===== SIGN IN ===== -->
+        <section class="auth-panel" id="panel-login" data-auth-panel="login" role="tabpanel" aria-labelledby="tab-login" data-title="Welcome back" data-sub="Sign in to your dashboard to continue.">
+          <form id="login-form" novalidate>
+            <div class="auth-field">
+              <label for="email">Email address</label>
+              <input type="email" id="email" name="email" class="auth-input" autocomplete="email" placeholder="you@example.com" />
+              <div class="auth-msg" data-msg-for="email"></div>
+            </div>
+            <div class="auth-field login-pw-field">
+              <label for="password">Password</label>
+              <div class="auth-pw">
+                <input type="password" id="password" name="password" class="auth-input" autocomplete="current-password" placeholder="Enter your password" data-capslock />
+                <button type="button" class="auth-pw-toggle" data-toggle-for="password" aria-label="Show password">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-eye><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+              <div class="auth-caps" data-caps hidden>Caps Lock is on</div>
+              <div class="auth-msg" data-msg-for="password"></div>
+            </div>
+            <div class="login-options">
+              <label class="login-remember">
+                <input type="checkbox" id="remember" name="remember" /> Remember me
+              </label>
+              <button type="button" class="login-forgot" data-action="forgot">Forgot password?</button>
+            </div>
+            <button type="submit" class="login-submit" data-idle="Sign In" data-busy="Signing in…">Sign In</button>
+          </form>
+          <div class="auth-divider"><span>or</span></div>
+          <button type="button" class="login-magic-btn" data-action="magic" data-magic-toggle>Sign in with a magic link</button>
+          <button type="button" class="login-forgot" data-action="magic-back" data-magic-back hidden>&larr; Back to password sign in</button>
+          <div id="magic-success" class="auth-magic-success" hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            <h3>Check your inbox</h3>
+            <p>We sent a secure sign-in link to <strong id="magic-success-email"></strong>. It expires in 10 minutes.</p>
+            <button type="button" class="login-submit" data-action="magic-back" data-magic-back>Back to sign in</button>
           </div>
-          <h2>The Blind Principal Clearing House</h2>
-          <p>Connecting farmers to offtakers through verified partners &mdash; with grade-adjusted pricing and information firewalls that protect every party.</p>
+          <p class="login-footer">New to ZVIDAMBANO? <button type="button" class="login-forgot" data-auth-tab="signup">Create an account</button></p>
+        </section>
+
+        <!-- ===== SIGN UP ===== -->
+        <section class="auth-panel" id="panel-signup" data-auth-panel="signup" role="tabpanel" aria-labelledby="tab-signup" data-title="Create your account" data-sub="Your profile is private — ZVIDA is your only counterparty." hidden>
+          <div class="auth-steps" role="presentation">
+            <span class="auth-step-dot active" data-step-dot="1">1</span>
+            <span class="auth-step-line" data-step-line="1"></span>
+            <span class="auth-step-dot" data-step-dot="2">2</span>
+            <span class="auth-step-line" data-step-line="2"></span>
+            <span class="auth-step-dot" data-step-dot="3">3</span>
+            <span class="auth-step-line" data-step-line="3"></span>
+            <span class="auth-step-dot" data-step-dot="4">4</span>
+            <span class="auth-step-line" data-step-line="4"></span>
+            <span class="auth-step-dot" data-step-dot="5">5</span>
+          </div>
+          <div class="auth-wiz-title" data-wiz-title tabindex="-1">Choose your role</div>
+
+          <form id="signup-form" novalidate>
+            <!-- Step 1: Choose your role -->
+            <div class="auth-wizard-step" data-wiz-step="1">
+              <div class="auth-roles">
+                <button type="button" class="auth-role-card" data-signup-role="farmer">
+                  <span class="auth-role-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                  <span class="login-role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l1-5h16l1 5"/><path d="M3 9v11h18V9"/><path d="M9 20v-6h6v6"/></svg></span>
+                  <span class="login-role-name">Farmer</span>
+                  <span class="login-role-desc">Sell your harvest</span>
+                </button>
+                <button type="button" class="auth-role-card" data-signup-role="offtaker">
+                  <span class="auth-role-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                  <span class="login-role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 21h20"/><path d="M4 21V11l6 4V11l6 4V11l4 3v7"/></svg></span>
+                  <span class="login-role-name">Offtaker</span>
+                  <span class="login-role-desc">Buy grain at scale</span>
+                </button>
+                <button type="button" class="auth-role-card" data-signup-role="driver">
+                  <span class="auth-role-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                  <span class="login-role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg></span>
+                  <span class="login-role-name">Driver</span>
+                  <span class="login-role-desc">Transport &amp; deliver</span>
+                </button>
+                <button type="button" class="auth-role-card" data-signup-role="supplier">
+                  <span class="auth-role-check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></span>
+                  <span class="login-role-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg></span>
+                  <span class="login-role-name">Vendor</span>
+                  <span class="login-role-desc">Sell farm inputs</span>
+                </button>
+              </div>
+              <div class="auth-msg" data-msg-for="role"></div>
+              <div class="auth-note">You work with one partner. ZVIDA handles pricing, payment and delivery from start to finish — your details stay private, always.</div>
+              <div class="auth-wiz-nav">
+                <button type="button" class="login-submit" data-wiz-next="1">Continue</button>
+              </div>
+            </div>
+
+            <!-- Step 2: Personal information -->
+            <div class="auth-wizard-step" data-wiz-step="2" hidden>
+              <div class="auth-grid">
+                <div class="auth-field">
+                  <label for="su-title">Title</label>
+                  <select id="su-title" name="title" class="auth-input auth-select" autocomplete="honorific-prefix">
+                    <option value="">Select…</option>
+                    <option>Mr</option><option>Mrs</option><option>Ms</option><option>Miss</option><option>Dr</option><option>Prof</option>
+                  </select>
+                </div>
+                <div class="auth-field">
+                  <label for="su-initials">Initials</label>
+                  <input type="text" id="su-initials" name="initials" class="auth-input" placeholder="e.g. J.P.D" />
+                </div>
+                <div class="auth-field">
+                  <label for="su-firstName">First name(s) *</label>
+                  <input type="text" id="su-firstName" name="firstName" class="auth-input" autocomplete="given-name" placeholder="John" />
+                  <div class="auth-msg" data-msg-for="firstName"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-middleName">Middle name</label>
+                  <input type="text" id="su-middleName" name="middleName" class="auth-input" autocomplete="additional-name" placeholder="Paul" />
+                </div>
+                <div class="auth-field">
+                  <label for="su-surname">Surname *</label>
+                  <input type="text" id="su-surname" name="surname" class="auth-input" autocomplete="family-name" placeholder="Doe" />
+                  <div class="auth-msg" data-msg-for="surname"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-dob">Date of birth *</label>
+                  <input type="date" id="su-dob" name="dob" class="auth-input" autocomplete="bday" max="2012-12-31" />
+                  <div class="auth-msg" data-msg-for="dob"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-gender">Gender *</label>
+                  <select id="su-gender" name="gender" class="auth-input auth-select">
+                    <option value="">Select…</option>
+                    <option>Male</option><option>Female</option><option>Other</option>
+                  </select>
+                  <div class="auth-msg" data-msg-for="gender"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-idType">ID type *</label>
+                  <select id="su-idType" name="idType" class="auth-input auth-select">
+                    <option value="">Select…</option>
+                    <option>National ID</option><option>Passport</option><option>Driver's Licence</option>
+                  </select>
+                  <div class="auth-msg" data-msg-for="idType"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-idNumber">ID number *</label>
+                  <input type="text" id="su-idNumber" name="idNumber" class="auth-input" autocomplete="off" placeholder="e.g. 22-265456-Y-12" />
+                  <div class="auth-msg" data-msg-for="idNumber"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-nationality">Nationality</label>
+                  <select id="su-nationality" name="nationality" class="auth-input auth-select">
+                    <option>Zimbabwean</option><option>South African</option><option>Zambian</option><option>Malawian</option><option>Mozambican</option><option>Other</option>
+                  </select>
+                </div>
+              </div>
+              <div class="auth-wiz-nav">
+                <button type="button" class="login-back" data-wiz-back="2">Back</button>
+                <button type="button" class="login-submit" data-wiz-next="2">Continue</button>
+              </div>
+            </div>
+
+            <!-- Step 3: Contact details -->
+            <div class="auth-wizard-step" data-wiz-step="3" hidden>
+              <div class="auth-grid">
+                <div class="auth-field">
+                  <label for="su-address1">Address line 1 *</label>
+                  <input type="text" id="su-address1" name="address1" class="auth-input" autocomplete="address-line1" placeholder="123 Main St" />
+                  <div class="auth-msg" data-msg-for="address1"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-address2">Address line 2</label>
+                  <input type="text" id="su-address2" name="address2" class="auth-input" autocomplete="address-line2" placeholder="Suburb / area" />
+                </div>
+                <div class="auth-field">
+                  <label for="su-city">City *</label>
+                  <input type="text" id="su-city" name="city" class="auth-input" autocomplete="address-level2" placeholder="Harare" />
+                  <div class="auth-msg" data-msg-for="city"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-province">Province *</label>
+                  <select id="su-province" name="province" class="auth-input auth-select" autocomplete="address-level1">
+                    <option value="">Select…</option>
+                    <option>Harare</option><option>Bulawayo</option><option>Mashonaland East</option><option>Mashonaland West</option><option>Mashonaland Central</option><option>Manicaland</option><option>Midlands</option><option>Masvingo</option><option>Matabeleland North</option><option>Matabeleland South</option>
+                  </select>
+                  <div class="auth-msg" data-msg-for="province"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-country">Country *</label>
+                  <select id="su-country" name="country" class="auth-input auth-select" autocomplete="country-name">
+                    <option>Zimbabwe</option><option>South Africa</option><option>Zambia</option><option>Malawi</option><option>Mozambique</option><option>Botswana</option>
+                  </select>
+                  <div class="auth-msg" data-msg-for="country"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-mobile">Mobile *</label>
+                  <input type="tel" id="su-mobile" name="phone" class="auth-input" autocomplete="tel" placeholder="+263 77 000 0000" />
+                  <div class="auth-msg" data-msg-for="phone"></div>
+                </div>
+                <div class="auth-field">
+                  <label for="su-telephone">Telephone <span class="auth-msg hint" style="display:inline;margin:0">(optional)</span></label>
+                  <input type="tel" id="su-telephone" name="telephone" class="auth-input" autocomplete="tel" placeholder="0242 123 456" />
+                </div>
+                <div class="auth-field span-2">
+                  <label for="su-email">Email address *</label>
+                  <input type="email" id="su-email" name="email" class="auth-input" autocomplete="email" placeholder="you@example.com" />
+                  <div class="auth-msg" data-msg-for="email"></div>
+                </div>
+                <div class="auth-field span-2">
+                  <label for="su-password">Password *</label>
+                  <div class="auth-pw">
+                    <input type="password" id="su-password" name="password" class="auth-input" autocomplete="new-password" placeholder="Create a strong password" data-capslock />
+                    <button type="button" class="auth-pw-gen" data-generate-for="su-password" title="Generate a strong password" aria-label="Generate a strong password">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/></svg>
+                    </button>
+                    <button type="button" class="auth-pw-toggle" data-toggle-for="su-password" aria-label="Show password">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-eye><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                  </div>
+                  <div class="auth-caps" data-caps hidden>Caps Lock is on</div>
+                  <div class="pw-meter" data-pw-meter><span></span><span></span><span></span><span></span></div>
+                  <div class="pw-strength-label" data-pw-label>Use at least 8 characters with a mix of cases, numbers and symbols.</div>
+                  <div class="pw-reqs" data-pw-reqs>
+                    <span class="pw-req" data-req="len"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> 8+ characters</span>
+                    <span class="pw-req" data-req="lower"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Lowercase</span>
+                    <span class="pw-req" data-req="upper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Uppercase</span>
+                    <span class="pw-req" data-req="num"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Number</span>
+                    <span class="pw-req" data-req="sym"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Symbol</span>
+                  </div>
+                  <div class="auth-msg" data-msg-for="password"></div>
+                </div>
+                <div class="auth-field span-2">
+                  <label for="su-confirm">Confirm password *</label>
+                  <div class="auth-pw">
+                    <input type="password" id="su-confirm" name="confirm" class="auth-input" autocomplete="new-password" placeholder="Re-enter your password" data-capslock />
+                    <button type="button" class="auth-pw-toggle" data-toggle-for="su-confirm" aria-label="Show password">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-eye><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    </button>
+                  </div>
+                  <div class="auth-caps" data-caps hidden>Caps Lock is on</div>
+                  <div class="auth-msg" data-msg-for="confirm"></div>
+                </div>
+              </div>
+              <div class="auth-note auth-note-lock">Your contact details are only visible to ZVIDA. We never share your information — ever.</div>
+              <div class="auth-wiz-nav">
+                <button type="button" class="login-back" data-wiz-back="3">Back</button>
+                <button type="button" class="login-submit" data-wiz-next="3">Continue</button>
+              </div>
+            </div>
+
+            <!-- Step 4: Role-specific details -->
+            <div class="auth-wizard-step" data-wiz-step="4" hidden>
+              <div data-role-details></div>
+              <div class="auth-note auth-note-lock" data-role-note>This information is only visible to ZVIDA and is used to verify your account.</div>
+              <div class="auth-wiz-nav">
+                <button type="button" class="login-back" data-wiz-back="4">Back</button>
+                <button type="button" class="login-submit" data-wiz-next="4">Continue</button>
+              </div>
+            </div>
+
+            <!-- Step 5: Consent & documents -->
+            <div class="auth-wizard-step" data-wiz-step="5" hidden>
+              <div class="auth-block-title">Data usage consent</div>
+              <p class="auth-block-note">Under the Zimbabwe Data Protection Act (Chapter 11:12) we need your consent to store and process your personal information.</p>
+              <label class="auth-consent"><input type="checkbox" data-consent="trading" /> <span>I consent to ZVIDA storing my personal information for trading purposes.</span></label>
+              <label class="auth-consent"><input type="checkbox" data-consent="analytics" /> <span>I consent to ZVIDA using my information for platform analytics and improving services.</span></label>
+              <label class="auth-consent"><input type="checkbox" data-consent="terms" /> <span>I agree to the <a href="terms.html" target="_blank">Terms &amp; Conditions</a> and <a href="privacy.html" target="_blank">Privacy Policy</a>.</span></label>
+              <div class="auth-msg" data-msg-for="consent"></div>
+
+              <div class="auth-block-title">Document upload</div>
+              <p class="auth-block-note">Upload clear copies of the required documents. Accepted formats: PDF, JPG, PNG (max 5 MB each).</p>
+              <div class="auth-doc">
+                <div class="auth-doc-meta"><strong>National ID scan *</strong><span>Both sides of your national ID card.</span></div>
+                <input type="file" accept=".pdf,.jpg,.jpeg,.png" class="auth-file" data-doc-input="id" aria-label="National ID scan" />
+                <div class="auth-doc-state" data-doc-state="id">No file selected</div>
+                <div class="auth-msg" data-msg-for="doc-id"></div>
+              </div>
+              <div class="auth-doc">
+                <div class="auth-doc-meta"><strong>Proof of residence *</strong><span>Utility bill or bank statement, not older than 3 months.</span></div>
+                <input type="file" accept=".pdf,.jpg,.jpeg,.png" class="auth-file" data-doc-input="residence" aria-label="Proof of residence" />
+                <div class="auth-doc-state" data-doc-state="residence">No file selected</div>
+                <div class="auth-msg" data-msg-for="doc-residence"></div>
+              </div>
+              <div class="auth-doc">
+                <div class="auth-doc-meta"><strong>Additional document <span class="auth-msg hint" style="display:inline;margin:0">(optional)</span></strong><span>Any other supporting document.</span></div>
+                <input type="file" accept=".pdf,.jpg,.jpeg,.png" class="auth-file" data-doc-input="extra" aria-label="Additional document" />
+                <div class="auth-doc-state" data-doc-state="extra">No file selected</div>
+              </div>
+
+              <div class="auth-note auth-note-lock">Your documents are encrypted and only accessible to ZVIDA support. They are never shared with anyone.</div>
+              <div class="auth-note">Your documents will be reviewed within 1&ndash;2 business days. You'll be notified by email once your account is approved.</div>
+
+              <div class="auth-wiz-nav">
+                <button type="button" class="login-back" data-wiz-back="5">Back</button>
+                <button type="submit" class="login-submit" data-idle="Submit Application" data-busy="Submitting…" data-step5-submit>Submit Application</button>
+              </div>
+            </div>
+          </form>
+
+          <p class="login-footer">Already have an account? <button type="button" class="login-forgot" data-auth-tab="login">Sign in</button></p>
+        </section>
+
+        <!-- ===== ACCOUNT CREATED / VERIFY ===== -->
+        <section class="auth-panel" id="panel-verify" data-auth-panel="verify" role="tabpanel" data-title="Check your inbox" data-sub="One more step before your account goes live." hidden>
+          <div class="auth-verify">
+            <div class="auth-verify-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="3"/><polyline points="2 7 12 13 22 7"/></svg>
+            </div>
+            <h3>Account created successfully!</h3>
+            <p>We sent a verification email to <strong id="verify-email"></strong>. Click the link inside to confirm your account.</p>
+            <div class="auth-verify-status">
+              <div><span class="done">Email verification</span><span class="state pending">Pending</span></div>
+              <div><span class="done">Document review</span><span class="state soon">1&ndash;2 business days</span></div>
+            </div>
+            <div class="auth-verify-actions">
+              <button type="button" class="login-submit" data-action="resend" data-idle="Resend Email" data-busy="Sending…">Resend Email</button>
+              <button type="button" class="login-back" data-action="back-to-login">Go to Login</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== FORGOT PASSWORD ===== -->
+        <section class="auth-panel" id="panel-forgot" data-auth-panel="forgot" role="tabpanel" data-title="Reset your password" data-sub="We'll email you a link to set a new one." hidden>
+          <p class="forgot-note">Enter your email address and we&rsquo;ll send you a link to reset your password.</p>
+          <form id="forgot-form" novalidate>
+            <div class="auth-field">
+              <label for="forgot-email">Email address</label>
+              <input type="email" id="forgot-email" name="email" class="auth-input" autocomplete="email" placeholder="you@example.com" />
+              <div class="auth-msg" data-msg-for="email"></div>
+            </div>
+            <button type="submit" class="login-submit" data-idle="Send Reset Link" data-busy="Sending…">Send Reset Link</button>
+            <button type="button" class="login-back" style="margin-top:10px" data-action="back-to-login">Back to Sign In</button>
+          </form>
+        </section>
+
+        <div class="auth-legal">
+          &copy; 2026 ZVIDAMBANO (Private) Limited &middot; <a href="privacy.html">Privacy</a> &middot; <a href="terms.html">Terms</a>
         </div>
       </div>
-    </div>
-
-    <div class="login-card">
-      <div class="login-logo--mobile">
-        <img src="logo.jpeg" alt="" class="logo-icon-img" />
-        <span class="logo-text">ZVIDAMBANO</span>
-      </div>
-      <h1 class="login-title">Sign in to your account</h1>
-      <p class="login-subtitle">Access your dashboard and manage your operations</p>
-
-      <form data-form novalidate>
-        <div class="login-field ds-field">
-          <label for="email" class="ds-label">Email address</label>
-          <input type="email" id="email" name="email" class="ds-input" autocomplete="email" data-validate="required email" placeholder="you@example.com" />
-          <div class="ds-msg"></div>
-        </div>
-        <div class="login-field ds-field">
-          <label for="password" class="ds-label">Password</label>
-          <input type="password" id="password" name="password" class="ds-input" autocomplete="current-password" data-validate="required password" placeholder="Enter your password" />
-          <div class="ds-msg"></div>
-        </div>
-        <div class="login-options">
-          <label class="login-remember">
-            <input type="checkbox" /> Remember me
-          </label>
-          <a href="#" class="login-forgot">Forgot password?</a>
-        </div>
-        <button type="submit" class="login-submit">Sign In</button>
-      </form>
-
-      <div class="login-divider">Secure access</div>
-
-      <p class="login-quick-title">Platform access</p>
-      <p class="login-subtitle">Dashboard views have been removed from the experience.</p>
-
-      <p class="login-footer">Don't have an account? <a href="contact.html">Contact us</a></p>
     </div>
   </main>
-
-  <footer class="footer">
-    <div class="container">
-      <div class="footer-grid">
-        <div class="footer-brand">
-          <div class="logo logo--footer">
-            <img src="logo.jpeg" alt="" class="logo-icon-img" />
-            <span class="logo-text">ZVIDAMBANO</span>
-          </div>
-          <p class="footer-tagline">"Giving value to your harvest."</p>
-          <p class="footer-desc">Crop farming, livestock, processing, out-grower management, and training since 2020.</p>
-          <p class="footer-company">ZVIDAMBANO Traders (Private) Limited</p>
-        </div>
-        <div class="footer-links-group">
-          <h4>Company</h4>
-          <ul>
-            <li><a href="about.html">About</a></li>
-            <li><a href="products.html">Products</a></li>
-            <li><a href="clients.html">Key Clients</a></li>
-            <li><a href="insights.html">Insights</a></li>
-            <li><a href="faq.html">FAQ</a></li>
-            <li><a href="careers.html">Careers</a></li>
-            <li><a href="contact.html">Contact</a></li>
-          </ul>
-        </div>
-        <div class="footer-links-group">
-          <h4>Contact Person</h4>
-          <p class="footer-contact-name">Tafadzwa Clemence Chikombe</p>
-          <p>5417 Cranbrook, Ruwa, Zimbabwe</p>
-          <p><a href="mailto:clemencechikombe@gmail.com">clemencechikombe@gmail.com</a></p>
-          <p><a href="tel:+263776571481">+263 776 571 481</a></p>
-        </div>
-      </div>
-      <div class="footer-bottom">
-        <p>&copy; 2026 ZVIDAMBANO (Private) Limited. All rights reserved.</p>
-        <div class="footer-legal">
-          <a href="privacy.html">Privacy Policy</a>
-          <a href="terms.html">Terms of Service</a>
-        </div>
-      </div>
-    </div>
-  </footer>
 
   <script type="module" src="src/main.ts"></script>
 </body>

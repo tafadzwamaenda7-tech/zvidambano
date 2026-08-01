@@ -1,4 +1,4 @@
-import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, listRow, ledger, itemCard, profile, tabs, wf, jsBtn, registerDownload, downloadNow, JS, toast, downloadBtn, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, loadCatalog, loadCard } from './core';
+import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, listRow, ledger, itemCard, profile, tabs, wf, jsBtn, registerDownload, downloadNow, JS, toast, downloadBtn, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, loadCatalog, loadCard, zdocDocuments } from './core';
 
 JS.callDispatch = () => {
   toast('Dialing ZVIDA dispatch +263 24 277 8800 — placing the call from your phone', 'info');
@@ -159,6 +159,14 @@ const P = {
     `;
     },
   },
+  documents: {
+    id: 'documents',
+    label: 'Documents',
+    icon: ICON.file,
+    title: 'Trip Documents',
+    sub: 'Delivery notes & proof of delivery',
+    render: () => zdocDocuments('driver', 'John Doe'),
+  },
   weighbridge: {
     id: 'weighbridge',
     label: 'Weighbridge',
@@ -295,10 +303,10 @@ const P = {
   },
   marketplace: {
     id: 'marketplace',
-    label: 'Marketplace',
+    label: 'Deliveries',
     icon: ICON.shop,
-    title: 'Marketplace Deliveries',
-    sub: 'Ship farmer orders',
+    title: 'Deliveries',
+    sub: 'Ship ZVIDA orders',
     render: () => {
       const orders = marketOrders();
       const ready = orders.filter((o) => o.status === 'SHIPPED');
@@ -306,15 +314,15 @@ const P = {
       const done = orders.filter((o) => ['DELIVERED', 'PAID'].includes(o.status));
       return `
       ${kpis([
-        { label: 'Ready to Pick Up', value: ready.length, icon: ICON.box, delta: 'Shipped by sellers', up: true, spark: [1, 0, 1, 2, 1, 1, ready.length], foot: 'Pick up today', open: '#marketplace' },
-        { label: 'Out for Delivery', value: onRoad.length, icon: ICON.route, delta: 'En route to buyers', up: false, spark: [0, 1, 1, 0, 2, 1, onRoad.length], foot: 'Track until signed', open: '#marketplace' },
-        { label: 'Delivered', value: done.length, icon: ICON.check, delta: 'Signed for', up: true, spark: [2, 3, 3, 4, 4, 5, done.length], foot: 'Past marketplace runs', open: '#marketplace' },
+        { label: 'Ready to Pick Up', value: ready.length, icon: ICON.box, delta: 'Shipped by ZVIDA', up: true, spark: [1, 0, 1, 2, 1, 1, ready.length], foot: 'Pick up today', open: '#marketplace' },
+        { label: 'Out for Delivery', value: onRoad.length, icon: ICON.route, delta: 'En route to customers', up: false, spark: [0, 1, 1, 0, 2, 1, onRoad.length], foot: 'Track until signed', open: '#marketplace' },
+        { label: 'Delivered', value: done.length, icon: ICON.check, delta: 'Signed for', up: true, spark: [2, 3, 3, 4, 4, 5, done.length], foot: 'Past ZVIDA deliveries', open: '#marketplace' },
       ])}
-      ${banner('info', 'Pick up shipped orders from the vendor and deliver them to the farm gate. Confirm delivery when the buyer signs.')}
+      ${banner('info', 'Pick up shipped orders from ZVIDA and deliver them to the customer. Confirm delivery when the customer signs.')}
       ${sec('Ready to Deliver', 'View trips', 'Opening your trips', ready.length + onRoad.length, '#trips')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete'], 0, 'dmkt')}
       ${orders.map((o) => marketOrderGroup(o, 'driver', 'dmkt', marketBucket(o.status))).join('')}
-      ${ready.length + onRoad.length === 0 ? banner('ok', 'No marketplace deliveries right now. New shipped orders will appear here.') : ''}
+      ${ready.length + onRoad.length === 0 ? banner('ok', 'No ZVIDA deliveries right now. New shipped orders will appear here.') : ''}
     `;
     },
   },
@@ -332,5 +340,10 @@ boot({
   accentLight: '#fff7ed',
   accentRgb: '234, 88, 12',
   gradientEnd: '#f97316',
-  pages: [P.today, P.marketplace, P.trips, P.weighbridge, P.earnings, P.settings, P.support],
+  pages: [P.today, P.marketplace, P.trips, P.weighbridge, P.documents, P.earnings, P.settings, P.support],
+  navGroups: [
+    { label: 'Overview', pages: ['today', 'marketplace'] },
+    { label: 'Trips', pages: ['trips', 'weighbridge', 'documents', 'earnings'] },
+    { label: 'Account', pages: ['settings', 'support'] },
+  ],
 });

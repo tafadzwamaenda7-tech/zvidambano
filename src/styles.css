@@ -1510,11 +1510,11 @@ body.sidebar-open { overflow: hidden; }
 .login-remember { display: flex; align-items: center; gap: 6px; font-size: .8125rem; color: var(--dash-text-2); }
 .login-forgot { font-size: .8125rem; color: var(--dash-accent); font-weight: 500; }
 .login-submit {
-  width: 100%; padding: 12px; background: var(--dash-gradient); color: #fff;
+  width: 100%; padding: 12px; background: var(--dash-accent); color: #fff;
   border: none; border-radius: var(--dash-radius-xs); font-size: .9375rem; font-weight: 600;
-  font-family: var(--font); cursor: pointer; transition: transform var(--dash-transition), box-shadow var(--dash-transition);
+  font-family: var(--font); cursor: pointer; transition: background var(--dash-transition), transform var(--dash-transition), box-shadow var(--dash-transition);
 }
-.login-submit:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(5,150,105,.3); }
+.login-submit:hover { background: #047857; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(5,150,105,.18); }
 .login-divider { display: flex; align-items: center; gap: 16px; margin: 28px 0; color: var(--dash-text-3); font-size: .75rem; text-transform: uppercase; letter-spacing: .05em; }
 .login-divider::before, .login-divider::after { content: ''; flex: 1; height: 1px; background: var(--dash-border); }
 .login-roles { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 24px; }

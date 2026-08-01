@@ -118,4 +118,3 @@ serve(async (req) => {
     })
   }
 })
-</write_to_file>

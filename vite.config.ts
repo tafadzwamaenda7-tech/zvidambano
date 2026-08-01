@@ -5,6 +5,7 @@ const htmlFiles = [
   'index', 'about', 'careers', 'clients', 'contact', 'faq', 'insights',
   'products', 'login', 'terms', 'privacy',
   'farmer-dashboard', 'zvida-dashboard', 'offtaker-dashboard', 'vendor-dashboard', 'driver-dashboard',
+  'support-dashboard',
 ];
 
 const input: Record<string, string> = {};

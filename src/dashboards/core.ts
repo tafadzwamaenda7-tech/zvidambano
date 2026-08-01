@@ -2,6 +2,10 @@
    ZVIDA Dashboards — shared shell + UI components (v2)
    ============================================================ */
 
+import { syncAll, persistOrder, persistLoad, persistProduct, deleteProduct } from '../lib/zvida-live';
+import type { LiveOrder, LiveLoad, LiveProduct } from '../lib/zvida-live';
+import { signOutAndRedirect } from '../lib/auth-ui';
+
 export interface PageCfg {
   id: string;
   label: string;
@@ -25,6 +29,7 @@ export interface RoleCfg {
   accentRgb: string;
   gradientEnd: string;
   pages: PageCfg[];
+  navGroups?: { label: string; pages: string[] }[];
 }
 
 export const ICON = {
@@ -118,6 +123,8 @@ export const ICON = {
   percent: '<line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
   leaf: '<path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/>',
+  refresh:
+    '<polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>',
 };
 
 export function svg(path: string, cls = ''): string {
@@ -446,7 +453,7 @@ export function kpis(stats: { label: string; value: string | number; icon?: stri
       return `<div class="dsh-kpi"${s.open ? ` data-open="${s.open}"` : ''}>
         <div class="dsh-kpi-top">
           <span class="dsh-kpi-label">${s.label}</span>
-          ${s.icon ? `<span class="dsh-kpi-ico">${svg(s.icon)}</span>` : ''}
+          ${s.icon ? `<span class="dsh-kpi-chip">${svg(s.icon)}</span>` : ''}
         </div>
         <div class="dsh-kpi-value" ${isNum ? `data-count="${s.value}"` : ''}>${isNum ? '' : s.value}</div>
         ${delta}
@@ -504,6 +511,80 @@ export function chips(items: (string | { label: string; value?: string })[], act
 /* ---------- Alerts ---------- */
 export function banner(tone: 'info' | 'warn' | 'ok' | 'danger', text: string, action?: string, actionToast?: string, actionHref?: string): string {
   return `<div class="dsh-alert ${tone}">${svg(ICON.alert)}<span>${text}${action ? (actionHref ? `<a class="dsh-alert-link" href="${actionHref}" data-toast="${(actionToast || action).replace(/"/g, '&quot;')}">${action}</a>` : btn(action, 'ghost sm', actionToast || action)) : ''}</span></div>`;
+}
+
+/* ---------- States: empty / error / success / loading ---------- */
+export function emptyState(o: { icon?: string; title: string; sub: string; action?: string; actionToast?: string; actionHref?: string; hint?: string }): string {
+  return `<div class="dsh-state dsh-empty">
+    <span class="dsh-state-ico">${svg(o.icon || ICON.search)}</span>
+    <div class="dsh-state-title">${o.title}</div>
+    <div class="dsh-state-sub">${o.sub}</div>
+    ${o.action ? `<div class="dsh-state-act">${btn(o.action, 'primary', o.actionToast || o.action, o.actionHref || undefined)}</div>` : ''}
+    ${o.hint ? `<div class="dsh-state-hint">${o.hint}</div>` : ''}
+  </div>`;
+}
+
+export function errorState(o: { title?: string; message: string; retry?: boolean; action?: string; actionToast?: string; actionHref?: string }): string {
+  return `<div class="dsh-state dsh-error-state" role="alert">
+    <span class="dsh-state-ico">${svg(ICON.alert)}</span>
+    <div class="dsh-state-title">${o.title || 'Something went wrong'}</div>
+    <div class="dsh-state-sub">${o.message}</div>
+    <div class="dsh-state-act">
+      ${o.retry ? `<button type="button" class="dsh-btn ghost" data-retry>${svg(ICON.refresh)}<span>Try again</span></button>` : ''}
+      ${o.action ? btn(o.action, 'primary', o.actionToast || o.action, o.actionHref || undefined) : ''}
+    </div>
+  </div>`;
+}
+
+export function successState(o: { title: string; message: string; action?: string; actionToast?: string; actionHref?: string }): string {
+  return `<div class="dsh-state dsh-success-state" role="status">
+    <span class="dsh-state-ico">${svg(ICON.check)}</span>
+    <div class="dsh-state-title">${o.title}</div>
+    <div class="dsh-state-sub">${o.message}</div>
+    ${o.action ? `<div class="dsh-state-act">${btn(o.action, 'primary', o.actionToast || o.action, o.actionHref || undefined)}</div>` : ''}
+  </div>`;
+}
+
+export function spinner(label?: string): string {
+  return `<span class="dsh-spinner" role="status" aria-live="polite">${label ? `<span class="dsh-spinner-label">${label}</span>` : ''}<span class="dsh-spinner-ring"></span></span>`;
+}
+
+export function skeleton(kind: 'card' | 'row' | 'table' = 'card', count = 3): string {
+  let html = '';
+  if (kind === 'row') {
+    for (let i = 0; i < count; i++) html += `<div class="dsh-sk-row"><span class="dsh-sk sk-ico"></span><div><span class="dsh-sk sk-line" style="width:55%"></span><span class="dsh-sk sk-line" style="width:35%"></span></div><span class="dsh-sk sk-chip"></span></div>`;
+  } else if (kind === 'table') {
+    for (let i = 0; i < count; i++) html += `<div class="dsh-sk-row"><span class="dsh-sk sk-line" style="width:30%"></span><span class="dsh-sk sk-line" style="width:55%"></span><span class="dsh-sk sk-chip"></span></div>`;
+  } else {
+    for (let i = 0; i < count; i++) html += `<div class="dsh-sk-card"><span class="dsh-sk sk-line" style="width:40%"></span><span class="dsh-sk sk-line" style="width:70%"></span><span class="dsh-sk sk-line" style="width:92%"></span></div>`;
+  }
+  return `<div class="dsh-skeleton" role="status" aria-label="Loading">${html}</div>`;
+}
+
+/* ---------- Progressive disclosure ---------- */
+export function disclose(o: { title: string; summary?: string; body: string; open?: boolean }): string {
+  return `<div class="dsh-disclose${o.open ? ' open' : ''}">
+    <button type="button" class="dsh-disclose-head" data-disclose aria-expanded="${o.open ? 'true' : 'false'}">
+      ${svg(ICON.chevronRight)}
+      <span class="dsh-disclose-title">${o.title}</span>
+      ${o.summary ? `<span class="dsh-disclose-sum">${o.summary}</span>` : ''}
+    </button>
+    <div class="dsh-disclose-body">${o.body}</div>
+  </div>`;
+}
+
+/* ---------- Form fields (validation, counters, passwords) ---------- */
+export function countBadge(key: string, max: number): string {
+  return `<span class="dsh-count" data-count-for="${key}">0/${max}</span>`;
+}
+
+export function pwCheck(): string {
+  return `<div class="dsh-pw-check" data-pw-check>
+    <span data-pw="len">${svg(ICON.check)} 8+ characters</span>
+    <span data-pw="num">${svg(ICON.check)} A number</span>
+    <span data-pw="up">${svg(ICON.check)} An uppercase letter</span>
+    <span data-pw="sym">${svg(ICON.check)} A symbol</span>
+  </div>`;
 }
 
 /* ---------- Tables ---------- */
@@ -570,6 +651,12 @@ export function steps(current: number, total: number, label?: string): string {
   return html;
 }
 
+/* ---------- In-table progress cell ---------- */
+export function miniBar(pct: number, tone: 'ok' | 'warn' | 'danger' | 'accent' = 'accent'): string {
+  const p = Math.max(0, Math.min(100, pct));
+  return `<span class="dsh-mbar" title="${Math.round(p)}%"><i class="${tone}" style="width:${p}%"></i></span>`;
+}
+
 export function ring(pct: number, label?: string, size = 72): string {
   const r = (size - 8) / 2;
   const c = 2 * Math.PI * r;
@@ -599,14 +686,24 @@ export function field(label: string, control: string, hint?: string): string {
   return `<div class="dsh-field"><label class="dsh-label">${label}</label>${control}${hint ? `<span class="dsh-hint">${hint}</span>` : ''}</div>`;
 }
 
-export function input(value?: string, placeholder?: string): string {
-  return `<input class="dsh-input" value="${value || ''}" placeholder="${placeholder || ''}" />`;
+export function input(value?: string, placeholder?: string, o: { val?: string; counter?: string; max?: number; type?: string; step?: string; min?: string } = {}): string {
+  const extra =
+    (o.type ? ` type="${o.type}"` : '') +
+    (o.step ? ` step="${o.step}"` : '') +
+    (o.min ? ` min="${o.min}"` : '') +
+    (o.val ? ` data-val="${o.val}"` : '') +
+    (o.counter ? ` data-counter="${o.counter}" maxlength="${o.max ?? 160}"` : '');
+  return `<input class="dsh-input"${extra} value="${(value ?? '').replace(/"/g, '&quot;')}" placeholder="${placeholder || ''}" />`;
 }
-export function select(options: string[], sel = 0): string {
-  return `<select class="dsh-select">${options.map((o, i) => `<option ${i === sel ? 'selected' : ''}>${o}</option>`).join('')}</select>`;
+export function select(options: string[], sel = 0, o: { val?: string; ph?: boolean } = {}): string {
+  const val = o.val ? ` data-val="${o.val}"` : '';
+  const ph = o.ph ? `<option value="" ${sel === -1 ? 'selected' : ''} disabled hidden>Choose…</option>` : '';
+  return `<select class="dsh-select"${val}>${ph}${options.map((x, i) => `<option value="${x}"${i === sel ? ' selected' : ''}>${x}</option>`).join('')}</select>`;
 }
-export function textarea(rows = 3, placeholder?: string): string {
-  return `<textarea class="dsh-textarea" rows="${rows}" placeholder="${placeholder || ''}"></textarea>`;
+export function textarea(rows = 3, placeholder?: string, o: { counter?: string; max?: number; val?: string } = {}): string {
+  const counter = o.counter ? ` data-counter="${o.counter}" maxlength="${o.max ?? 160}"` : '';
+  const val = o.val ? ` data-val="${o.val}"` : '';
+  return `<textarea class="dsh-textarea" rows="${rows}"${counter}${val} placeholder="${placeholder || ''}"></textarea>`;
 }
 
 /* ---------- Chat ---------- */
@@ -804,11 +901,13 @@ export function marketProduct(id: string): MarketProduct | undefined {
 export function marketAddProduct(p: MarketProduct): void {
   mkLoad()!.cat.unshift(p);
   mkSave();
+  void persistProduct(p as unknown as LiveProduct);
 }
 
 export function marketRemoveProduct(id: string): void {
   mkLoad()!.cat = mkLoad()!.cat.filter((p) => p.id !== id);
   mkSave();
+  void deleteProduct(id);
 }
 
 export function marketOrders(seller?: string): MarketOrder[] {
@@ -886,6 +985,7 @@ export function marketPlace(buyer: string): MarketOrder {
   s.orders.push(order);
   s.cart = {};
   mkSave();
+  void persistOrder(order as unknown as LiveOrder);
   return order;
 }
 
@@ -896,6 +996,7 @@ function mkAdvance(o: MarketOrder, step: number, note: string): void {
   o.history.push({ t: o.flow[o.step], d: note });
   if (o.status === 'DELIVERED') o.history.push({ t: 'Delivered', d: 'Signed for · carrier' });
   mkSave();
+  void persistOrder(o as unknown as LiveOrder);
 }
 
 function mkSet(o: MarketOrder, status: string, note: string): void {
@@ -903,6 +1004,7 @@ function mkSet(o: MarketOrder, status: string, note: string): void {
   o.tone = mkWrap(status).tone;
   o.history.push({ t: status.replace(/_/g, ' '), d: note });
   mkSave();
+  void persistOrder(o as unknown as LiveOrder);
 }
 
 export function marketUpdate(id: string, action: string, note?: string): void {
@@ -977,29 +1079,33 @@ export function marketSteps(o: MarketOrder): string {
   return `<div class="dsh-msteps">${o.flow.map((s, i) => `<span class="dsh-mstep ${i < o.step ? 'do' : i === o.step ? 'on' : ''}">${s}</span>`).join('<i class="dsh-msep">›</i>')}</div>`;
 }
 
+export function marketOrderFoot(o: MarketOrder, role: 'buyer' | 'seller' | 'admin' | 'driver' = 'buyer'): string {
+  const st = mkWrap(o.status);
+  if (role === 'seller') {
+    if (o.status === 'NEW') return `${jsBtn('Confirm Order', 'primary sm', 'mktAction', o.id + ':confirm', 'Order confirmed')}${jsBtn('Reject', 'danger sm', 'mktAction', o.id + ':reject', 'Order rejected')}`;
+    if (o.status === 'CONFIRMED') return jsBtn('Mark Processing', 'primary sm', 'mktAction', o.id + ':process', 'Order marked as processing');
+    if (o.status === 'PROCESSING') return jsBtn('Mark Shipped', 'primary sm', 'mktAction', o.id + ':ship', 'Order marked as shipped');
+    if (o.status === 'SHIPPED' || o.status === 'OUT_FOR_DELIVERY') return pill('Awaiting delivery', 'indigo');
+    if (o.status === 'DELIVERED') return `${pill('Delivered', 'green')}${jsBtn('Call Buyer', 'ghost sm', 'marketCall', o.buyer, 'Dialing buyer…')}`;
+    return pill(st.status, st.tone);
+  }
+  if (role === 'driver') {
+    if (o.status === 'SHIPPED') return jsBtn('Start Delivery', 'primary sm', 'mktAction', o.id + ':out', 'Picked up — en route');
+    if (o.status === 'OUT_FOR_DELIVERY') return jsBtn('Mark Delivered', 'primary sm', 'mktAction', o.id + ':deliver', 'Delivered — signed for');
+    return pill(st.status, st.tone);
+  }
+  if (role === 'admin') {
+    return `${jsBtn('Notify Seller', 'ghost sm', 'mktAction', o.id + ':notify', 'Reminder sent')}${o.status === 'DELIVERED' ? jsBtn('Release Payment', 'primary sm', 'mktAction', o.id + ':pay', 'Payment released') : o.status === 'PAID' ? pill('Paid', 'green') : jsBtn('Escalate', 'danger sm', 'mktAction', o.id + ':esc', 'Escalated to resolution desk')}`;
+  }
+  if (['DELIVERED', 'PAID'].includes(o.status)) return `${jsBtn('Buy Again', 'ghost sm', 'mktBuyAgain', o.id, 'Items added to cart')}${jsBtn('Rate Order', 'ghost sm', 'mktAction', o.id + ':review', 'Thanks for your review')}`;
+  if (o.status === 'CANCELLED') return pill('Cancelled', 'red');
+  if (o.status === 'ESCALATED') return pill('Escalated — ZVIDA resolving', 'red');
+  return pill('Track below', 'blue');
+}
+
 export function marketOrderCard(o: MarketOrder, role: 'buyer' | 'seller' | 'admin' | 'driver' = 'buyer'): string {
   const st = mkWrap(o.status);
   const items = o.items.map((i) => `${i.name} ×${i.qty}`).join(', ');
-  let foot = '';
-  if (role === 'seller') {
-    if (o.status === 'NEW') foot = `${jsBtn('Confirm Order', 'primary sm', 'mktAction', o.id + ':confirm', 'Order confirmed')}${jsBtn('Reject', 'danger sm', 'mktAction', o.id + ':reject', 'Order rejected')}`;
-    else if (o.status === 'CONFIRMED') foot = jsBtn('Mark Processing', 'primary sm', 'mktAction', o.id + ':process', 'Order marked as processing');
-    else if (o.status === 'PROCESSING') foot = jsBtn('Mark Shipped', 'primary sm', 'mktAction', o.id + ':ship', 'Order marked as shipped');
-    else if (o.status === 'SHIPPED' || o.status === 'OUT_FOR_DELIVERY') foot = pill('Awaiting delivery', 'indigo');
-    else if (o.status === 'DELIVERED') foot = `${pill('Delivered', 'green')}${jsBtn('Call Buyer', 'ghost sm', 'marketCall', o.buyer, 'Dialing buyer…')}`;
-    else foot = pill(st.status, st.tone);
-  } else if (role === 'driver') {
-    if (o.status === 'SHIPPED') foot = jsBtn('Start Delivery', 'primary sm', 'mktAction', o.id + ':out', 'Picked up — en route');
-    else if (o.status === 'OUT_FOR_DELIVERY') foot = jsBtn('Mark Delivered', 'primary sm', 'mktAction', o.id + ':deliver', 'Delivered — signed for');
-    else foot = pill(st.status, st.tone);
-  } else if (role === 'admin') {
-    foot = `${jsBtn('Notify Seller', 'ghost sm', 'mktAction', o.id + ':notify', 'Reminder sent')}${o.status === 'DELIVERED' ? jsBtn('Release Payment', 'primary sm', 'mktAction', o.id + ':pay', 'Payment released') : o.status === 'PAID' ? pill('Paid', 'green') : jsBtn('Escalate', 'danger sm', 'mktAction', o.id + ':esc', 'Escalated to resolution desk')}`;
-  } else {
-    if (['DELIVERED', 'PAID'].includes(o.status)) foot = `${jsBtn('Buy Again', 'ghost sm', 'mktBuyAgain', o.id, 'Items added to cart')}${jsBtn('Rate Order', 'ghost sm', 'mktAction', o.id + ':review', 'Thanks for your review')}`;
-    else if (o.status === 'CANCELLED') foot = pill('Cancelled', 'red');
-    else if (o.status === 'ESCALATED') foot = pill('Escalated — ZVIDA resolving', 'red');
-    else foot = pill('Track below', 'blue');
-  }
   const open = role === 'admin' || role === 'driver' ? '#marketplace' : '#orders';
   return `${itemCard({
     title: `${o.ref} · ${items}`,
@@ -1010,7 +1116,7 @@ export function marketOrderCard(o: MarketOrder, role: 'buyer' | 'seller' | 'admi
     open,
     time: `${o.placedAt} · ${o.payment}`,
     meta: `${marketSteps(o)}<br/>Buyer: <b>${o.buyer}</b> · Delivery: ${o.delivery} · Total: <b>${marketMoney(o.total)}</b>`,
-    foot,
+    foot: marketOrderFoot(o, role),
   })}`;
 }
 
@@ -1031,7 +1137,7 @@ export function marketBucket(status: string): string {
 
 export function marketOrderGroup(o: MarketOrder, role: 'buyer' | 'seller' | 'admin' | 'driver', filterGroup: string, filterValue: string): string {
   const active = !['DELIVERED', 'PAID', 'CANCELLED', 'ESCALATED'].includes(o.status);
-  return `<div data-filter-group="${filterGroup}" data-filter-value="${filterValue}"${active ? ' data-filter-active="1"' : ''}>${marketOrderCard(o, role)}</div>`;
+  return `<div data-filter-group="${filterGroup}" data-filter-value="${filterValue}" data-mk-role="${role}"${active ? ' data-filter-active="1"' : ''}>${marketOrderCard(o, role)}</div>`;
 }
 
 export function refresh(): void {
@@ -1203,10 +1309,10 @@ function lgSeed(): { loads: Consignment[]; seq: number } {
       l('LD-2215', '#883', 'Soya', 'soya', 'James (Farmer)', 'Miller Corp (Offtaker)', 'Farm 42, Ruwa', 'Miller Corp, Harare',
         'scale', 450, 'COC', 'John Doe', '+263 77 123 4567', 'ABC-123 · Scania R450', 'XYZ-789 · Grain Tipper 35t',
         'LOADING', 0, 0, '', 'On collection', 0, 0, 0, 0, 20),
-      l('LD-2216', '#886', 'Maize', 'grain', 'Peter (Farmer)', 'ZVIDA Brokerage', 'Farm 12, Marondera', 'ZVIDA Depot, Chegutu',
+      l('LD-2216', '#886', 'Maize', 'grain', 'Peter (Farmer)', 'ZVIDA', 'Farm 12, Marondera', 'ZVIDA Depot, Chegutu',
         'weighbridge', 180, 'NET_14', 'Sarah Moyo', '+263 78 987 6543', 'DEF-456 · FAW 8x4', 'UVW-000 · Side tipper',
         'PENDING_PAYMENT', 12000, 26500, 'WB-8861', 'Aug 14, 2026', 100),
-      l('LD-2217', '#887', 'NPK Fertilizer', 'fert', 'Vendor Supplies Ltd', 'ZVIDA Brokerage', 'Vendor Yard, Norton', 'ZVIDA Depot, Chinhoyi',
+      l('LD-2217', '#887', 'NPK Fertilizer', 'fert', 'Vendor Supplies Ltd', 'ZVIDA', 'Vendor Yard, Norton', 'ZVIDA Depot, Chinhoyi',
         'weighbridge', 560, 'NET_21', '', '', '', '',
         'PENDING', 0, 0, '', 'Aug 21, 2026', 0),
       l('LD-2218', '#888', 'Wheat', 'wheat', 'Peter (Farmer)', 'Miller Corp (Offtaker)', 'Farm 12, Marondera', 'Miller Corp, Harare',
@@ -1215,16 +1321,16 @@ function lgSeed(): { loads: Consignment[]; seq: number } {
       l('LD-2219', '#889', 'Maize', 'grain', 'James (Farmer)', 'Miller Corp (Offtaker)', 'Farm 42, Ruwa', 'Miller Corp, Harare',
         'weighbridge', 200, 'NET_3', 'John Doe', '+263 77 123 4567', 'ABC-123 · Scania R450', 'XYZ-789 · Grain Tipper 35t',
         'IN_TRANSIT', 11000, 0, 'WB-8891', 'Aug 3, 2026', 62),
-      l('LD-2220', '#890', 'Maize', 'grain', 'James (Farmer)', 'ZVIDA Brokerage', 'Farm 42, Ruwa', 'ZVIDA Depot, Chegutu',
+      l('LD-2220', '#890', 'Maize', 'grain', 'James (Farmer)', 'ZVIDA', 'Farm 42, Ruwa', 'ZVIDA Depot, Chegutu',
         'weighbridge', 200, 'NET_14', 'Sarah Moyo', '+263 78 987 6543', 'DEF-456 · FAW 8x4', 'UVW-000 · Side tipper',
         'PENDING_PAYMENT', 8000, 22000, 'WB-8901', 'Aug 14, 2026', 100),
-      l('LD-2221', '#891', 'Maize', 'grain', 'James (Farmer)', 'ZVIDA Brokerage', 'Farm 42, Ruwa', 'ZVIDA Depot, Chegutu',
+      l('LD-2221', '#891', 'Maize', 'grain', 'James (Farmer)', 'ZVIDA', 'Farm 42, Ruwa', 'ZVIDA Depot, Chegutu',
         'weighbridge', 200, 'NET_14', 'Sarah Moyo', '+263 78 987 6543', 'DEF-456 · FAW 8x4', 'UVW-000 · Side tipper',
         'PAID', 9000, 25000, 'WB-8911', 'Jul 31, 2026', 100),
-      l('LD-2222', '#892', 'NPK Fertilizer', 'fert', 'Vendor Supplies Ltd', 'ZVIDA Brokerage', 'Vendor Yard, Norton', 'ZVIDA Depot, Chinhoyi',
+      l('LD-2222', '#892', 'NPK Fertilizer', 'fert', 'Vendor Supplies Ltd', 'ZVIDA', 'Vendor Yard, Norton', 'ZVIDA Depot, Chinhoyi',
         'weighbridge', 560, 'NET_21', 'Sarah Moyo', '+263 78 987 6543', 'DEF-456 · FAW 8x4', 'UVW-000 · Side tipper',
         'PENDING_PAYMENT', 5000, 15500, 'WB-8921', 'Aug 21, 2026', 100),
-      l('LD-2223', '#893', 'NPK Fertilizer', 'fert', 'Vendor Supplies Ltd', 'ZVIDA Brokerage', 'Vendor Yard, Norton', 'ZVIDA Depot, Chinhoyi',
+      l('LD-2223', '#893', 'NPK Fertilizer', 'fert', 'Vendor Supplies Ltd', 'ZVIDA', 'Vendor Yard, Norton', 'ZVIDA Depot, Chinhoyi',
         'weighbridge', 560, 'NET_21', 'Sarah Moyo', '+263 78 987 6543', 'DEF-456 · FAW 8x4', 'UVW-000 · Side tipper',
         'PAID', 4500, 13500, 'WB-8931', 'Jul 30, 2026', 100),
       l('LD-2224', '#894', 'Maize', 'grain', 'James (Farmer)', 'Miller Corp (Offtaker)', 'Farm 42, Ruwa', 'Miller Corp, Harare',
@@ -1352,6 +1458,7 @@ function lgTransition(l: Consignment, action: string, note: string): void {
       break;
   }
   lgSave();
+  void persistLoad(l as unknown as LiveLoad);
 }
 
 export function freightUpdate(id: string, action: string, note?: string): void {
@@ -1449,7 +1556,7 @@ export function loadScaleForm(l: Consignment): string {
 
 /* ---------- Toasts ---------- */
 let toastBox: HTMLElement | null = null;
-export function toast(message: string, kind: 'success' | 'info' | 'warn' = 'success'): void {
+export function toast(message: string, kind: 'success' | 'info' | 'warn' | 'error' = 'success'): void {
   if (!toastBox) {
     toastBox = document.createElement('div');
     toastBox.className = 'dsh-toasts';
@@ -1457,13 +1564,13 @@ export function toast(message: string, kind: 'success' | 'info' | 'warn' = 'succ
   }
   const el = document.createElement('div');
   el.className = `dsh-toast ${kind}`;
-  el.innerHTML = `${svg(kind === 'info' ? ICON.bell : kind === 'warn' ? ICON.alert : ICON.check)}<span>${message.replace(/</g, '&lt;')}</span>`;
+  el.innerHTML = `${svg(kind === 'error' ? ICON.alert : kind === 'info' ? ICON.bell : kind === 'warn' ? ICON.alert : ICON.check)}<span>${message.replace(/</g, '&lt;')}</span>`;
   toastBox.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
   setTimeout(() => {
     el.classList.remove('show');
     setTimeout(() => el.remove(), 300);
-  }, 3200);
+  }, 3400);
 }
 
 function sendMessage(chatEl: HTMLElement | null): void {
@@ -1476,6 +1583,90 @@ function sendMessage(chatEl: HTMLElement | null): void {
     inp!.value = '';
   }
   toast('Message sent');
+}
+
+function orderDetailHtml(o: MarketOrder): string {
+  return `
+  <div class="dsh-drawer-row">${pill(o.status, mkWrap(o.status).tone)}<span class="dsh-drawer-note">${o.placedAt}</span></div>
+  ${marketSteps(o)}
+  <div class="dsh-drawer-grid">
+    <div><span class="l">Buyer</span><span class="v">${o.buyer}</span></div>
+    <div><span class="l">Delivery</span><span class="v">${o.delivery}</span></div>
+    <div><span class="l">Address</span><span class="v">${o.address}</span></div>
+    <div><span class="l">Payment</span><span class="v">${o.payment}</span></div>
+    <div><span class="l">Items</span><span class="v">${o.items.reduce((s, i) => s + i.qty, 0)}</span></div>
+    <div><span class="l">Total</span><span class="v strong">${marketMoney(o.total)}</span></div>
+  </div>
+  <div class="dsh-drawer-sec">Items</div>
+  ${o.items.map((i) => `
+    <div class="dsh-drawer-line">
+      <span class="dsh-drawer-thumb">${img(i.thumb, 'xs')}</span>
+      <span class="dsh-drawer-line-main">${i.name}<span class="dsh-drawer-line-sub">${i.seller} · ${i.unit} · ${marketMoney(i.price)} each</span></span>
+      <span class="dsh-drawer-line-qty">×${i.qty}</span>
+      <span class="dsh-drawer-line-total">${marketMoney(i.price * i.qty)}</span>
+    </div>`).join('')}
+  <div class="dsh-drawer-sec">Timeline</div>
+  ${o.history.map((h) => `<div class="dsh-drawer-event"><span class="t">${h.t}</span><span class="d">${h.d}</span></div>`).join('')}`;
+}
+
+function loadDetailHtml(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admin'): string {
+  const st = lgWrap(l.status);
+  return `
+  <div class="dsh-drawer-row">${pill(st.status, st.tone)}${loadTerm(l)}<span class="dsh-drawer-note">${l.contract} · Due ${l.due}</span></div>
+  <div class="dsh-lg-meta-row">
+    <span>${svg(ICON.route)} ${l.from} → ${l.dest}</span>
+    <span>${svg(ICON.truck)} ${l.driver || 'No driver assigned'} · ${l.truck || '—'}</span>
+    <span>${svg(ICON.contracts)} ${l.contract} · ${l.poRef} · ${l.order}</span>
+  </div>
+  <div class="dsh-lg-meta-row">
+    <span>${svg(ICON.users)} Supplier: ${l.supplier}</span>
+    <span>${svg(ICON.buy)} Receiver: ${l.receiver}</span>
+    <span>${svg(ICON.weighbridge)} ${l.weightMode === 'weighbridge' ? 'Weighbridge' : 'Scale · ' + l.bucketKg + ' kg bucket'}</span>
+  </div>
+  ${loadSteps(l)}
+  ${loadProgressBar(l)}
+  ${loadWeights(l)}
+  ${loadAmount(l)}
+  <div class="dsh-drawer-sec">Timeline</div>
+  ${l.history.map((h) => `<div class="dsh-drawer-event"><span class="t">${h.t}</span><span class="d">${h.d}</span></div>`).join('')}`;
+}
+
+function productDetailHtml(p: MarketProduct): string {
+  const stock = p.stock <= 0 ? pill('Out of stock', 'red') : p.stock < 10 ? pill(`${p.stock} left`, 'amber') : pill('In stock', 'green');
+  return `
+  <div class="dsh-drawer-row">${pill(p.category, 'blue')}${stock}</div>
+  <div class="dsh-drawer-line">
+    <span class="dsh-drawer-thumb">${img(p.thumb, 'md')}</span>
+    <span class="dsh-drawer-line-main">${p.name}<span class="dsh-drawer-line-sub">${p.seller} · ${p.unit}</span></span>
+    <span class="dsh-drawer-line-total">${marketMoney(p.price)}</span>
+  </div>
+  <div class="dsh-drawer-grid">
+    <div><span class="l">Rating</span><span class="v">${stars(p.rating)} <span class="dsh-drawer-note">${p.reviews} reviews</span></span></div>
+    <div><span class="l">Unit</span><span class="v">${p.unit}</span></div>
+    <div><span class="l">Seller</span><span class="v">${p.seller}</span></div>
+    <div><span class="l">Stock</span><span class="v">${p.stock}</span></div>
+  </div>`;
+}
+
+function closeDetail(): void {
+  document.querySelectorAll('[data-drawer-mask], [data-drawer]').forEach((el) => el.remove());
+}
+
+function openDetail(title: string, body: string, foot = ''): void {
+  const root = document.getElementById('dsh-root') as HTMLElement;
+  closeDetail();
+  root.insertAdjacentHTML('beforeend', `<div class="dsh-drawer-mask" data-drawer-mask></div><div class="dsh-drawer" data-drawer>
+    <div class="dsh-drawer-head">
+      <span class="dsh-drawer-title">${title}</span>
+      <button type="button" class="dsh-drawer-close" data-drawer-close aria-label="Close">${svg(ICON.x)}</button>
+    </div>
+    <div class="dsh-drawer-body">${body}</div>
+    ${foot ? `<div class="dsh-drawer-foot">${foot}</div>` : ''}
+  </div>`);
+  requestAnimationFrame(() => {
+    root.querySelector('.dsh-drawer')?.classList.add('show');
+    root.querySelector('.dsh-drawer-mask')?.classList.add('show');
+  });
 }
 
 export function wireToasts(root: HTMLElement): void {
@@ -1501,6 +1692,45 @@ export function wireToasts(root: HTMLElement): void {
 
   root.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
+
+    const modal = target.closest<HTMLElement>('[data-modal-close], [data-modal-mask]');
+    if (modal) {
+      e.preventDefault();
+      closeModal();
+      return;
+    }
+
+    const dis = target.closest<HTMLElement>('[data-disclose]');
+    if (dis) {
+      e.preventDefault();
+      const wrap = dis.closest<HTMLElement>('.dsh-disclose');
+      const open = wrap?.classList.toggle('open') ?? false;
+      dis.setAttribute('aria-expanded', String(open));
+      return;
+    }
+
+    const rt = target.closest<HTMLElement>('[data-retry]');
+    if (rt) {
+      e.preventDefault();
+      const btnEl = rt as HTMLButtonElement;
+      const original = btnEl.innerHTML;
+      btnEl.disabled = true;
+      btnEl.innerHTML = spinner();
+      void hydrateLive().finally(() => {
+        btnEl.disabled = false;
+        const still = btnEl.closest('[data-offline]') || btnEl.closest('.dsh-error-state');
+        btnEl.innerHTML = still ? original : 'Retried';
+        if (!still) setTimeout(() => { if (btnEl.isConnected) btnEl.innerHTML = original; }, 1600);
+      });
+      return;
+    }
+
+    const dc = target.closest<HTMLElement>('[data-drawer-close], [data-drawer-mask]');
+    if (dc) {
+      e.preventDefault();
+      closeDetail();
+      return;
+    }
 
     const dl = target.closest<HTMLElement>('[data-download]');
     if (dl) {
@@ -1626,10 +1856,38 @@ export function wireToasts(root: HTMLElement): void {
       return;
     }
 
-    const card = target.closest<HTMLElement>('.dsh-item, .dsh-kpi, .dsh-shop-card, .dsh-queue-card, .dsh-feed-item, .dsh-doc');
-    if (card && card.hasAttribute('data-open') && !target.closest('button, a, input, select, textarea, label')) {
-      openCard(card);
-      return;
+    const card = target.closest<HTMLElement>('.dsh-item, .dsh-lg-card, .dsh-kpi, .dsh-shop-card, .dsh-queue-card, .dsh-feed-item, .dsh-doc');
+    if (card && !target.closest('button, a, input, select, textarea, label')) {
+      const role = (card.closest<HTMLElement>('[data-mk-role]')?.getAttribute('data-mk-role') || card.getAttribute('data-lg-role') || 'buyer') as 'buyer' | 'seller' | 'admin' | 'driver';
+      const oKey = card.getAttribute('data-key');
+      if (oKey && oKey.startsWith('mk')) {
+        const o = marketOrder(oKey);
+        if (o) {
+          openDetail(`Order ${o.ref}`, orderDetailHtml(o), marketOrderFoot(o, role));
+          return;
+        }
+      }
+      const lKey = card.getAttribute('data-live-card');
+      if (lKey) {
+        const l = load(lKey);
+        if (l) {
+          const lrole = (card.getAttribute('data-lg-role') || 'supplier') as 'supplier' | 'driver' | 'receiver' | 'admin';
+          openDetail(`Load ${l.ref}`, loadDetailHtml(l, lrole), lgFoot(l, lrole));
+          return;
+        }
+      }
+      const pid = card.getAttribute('data-product');
+      if (pid) {
+        const p = marketProduct(pid);
+        if (p) {
+          openDetail(p.name, productDetailHtml(p), `${jsBtn('Add to Cart', 'primary sm', 'marketAdd', p.id, `${p.name} added to cart`)}${jsBtn('Buy Now', 'ghost sm', 'marketBuy', p.id, `Buying ${p.name}`)}`);
+          return;
+        }
+      }
+      if (card.hasAttribute('data-open')) {
+        openCard(card);
+        return;
+      }
     }
 
     const wfEl = target.closest<HTMLElement>('[data-wf]');
@@ -1651,6 +1909,11 @@ export function wireToasts(root: HTMLElement): void {
   });
 
   root.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeDetail();
+      closeModal();
+      return;
+    }
     if (e.key !== 'Enter') return;
     const search = (e.target as HTMLElement).closest<HTMLInputElement>('[data-mkt-search]');
     if (search) {
@@ -1661,13 +1924,275 @@ export function wireToasts(root: HTMLElement): void {
         const seller = card.querySelector<HTMLElement>('.dsh-shop-sub')?.textContent?.toLowerCase() || '';
         card.style.display = !q || name.includes(q) || seller.includes(q) ? '' : 'none';
       });
-      toast(q ? `Searching marketplace: ${search.value.trim()}` : 'Showing all products', 'info');
+      toast(q ? `Searching products: ${search.value.trim()}` : 'Showing all products', 'info');
       return;
     }
     const inp = (e.target as HTMLElement).closest<HTMLInputElement>('.dsh-chat-input .dsh-input');
     if (inp) {
       e.preventDefault();
       sendMessage(inp.closest('.dsh-chat'));
+    }
+  });
+
+  wireForms(root);
+}
+
+/* ---------- Modals (confirm / error / success) ---------- */
+export function modalHtml(o: { title: string; body: string; foot?: string; tone?: 'default' | 'error' | 'success' }): string {
+  return `<div class="dsh-modal-mask" data-modal-mask>
+    <div class="dsh-modal ${o.tone && o.tone !== 'default' ? `tone-${o.tone}` : ''}" role="dialog" aria-modal="true" aria-label="${o.title}">
+      <div class="dsh-modal-head"><span class="dsh-modal-title">${o.title}</span><button type="button" class="dsh-modal-close" data-modal-close aria-label="Close">${svg(ICON.x)}</button></div>
+      <div class="dsh-modal-body">${o.body}</div>
+      ${o.foot ? `<div class="dsh-modal-foot">${o.foot}</div>` : ''}
+    </div>
+  </div>`;
+}
+
+let confirmAction: (() => void) | null = null;
+
+export function openModal(html: string): void {
+  closeModal();
+  const host = document.createElement('div');
+  host.setAttribute('data-modal-host', '');
+  host.innerHTML = html;
+  document.body.appendChild(host.firstElementChild as HTMLElement);
+  document.body.classList.add('dsh-no-scroll');
+  requestAnimationFrame(() => document.querySelector('.dsh-modal-mask')?.classList.add('show'));
+}
+
+export function closeModal(): void {
+  document.body.classList.remove('dsh-no-scroll');
+  document.querySelectorAll('[data-modal-host]').forEach((el) => el.remove());
+}
+
+export function confirmModal(title: string, message: string, confirmLabel: string, onConfirm: () => void, danger = true): void {
+  confirmAction = onConfirm;
+  openModal(modalHtml({
+    title,
+    tone: danger ? 'error' : 'default',
+    body: `<p class="dsh-modal-msg">${message}</p>`,
+    foot: `<div class="dsh-btn-row right">${jsBtn('Cancel', 'ghost', 'closeModal')}${jsBtn(confirmLabel, danger ? 'danger' : 'primary', 'runConfirmAction')}</div>`,
+  }));
+}
+
+export function errorModal(title: string, message: string, actionLabel = 'Got it'): void {
+  openModal(modalHtml({ title, tone: 'error', body: `<p class="dsh-modal-msg">${message}</p>`, foot: `<div class="dsh-btn-row right">${jsBtn(actionLabel, 'primary', 'closeModal')}</div>` }));
+}
+
+export function successModal(title: string, message: string, actionLabel = 'Done'): void {
+  openModal(modalHtml({ title, tone: 'success', body: `<p class="dsh-modal-msg">${message}</p>`, foot: `<div class="dsh-btn-row right">${jsBtn(actionLabel, 'primary', 'closeModal')}</div>` }));
+}
+
+JS.closeModal = () => closeModal();
+JS.runConfirmAction = () => {
+  const fn = confirmAction;
+  closeModal();
+  confirmAction = null;
+  fn?.();
+};
+
+/* ---------- Form validation & feedback ---------- */
+export interface FieldVal {
+  req?: boolean;
+  min?: number;
+  max?: number;
+  num?: { min?: number; max?: number; step?: number };
+  ph?: RegExp;
+  msg?: string;
+}
+
+const FORM_RULES: Record<string, FieldVal> = {};
+export function formRules(rules: Record<string, FieldVal>): void {
+  Object.assign(FORM_RULES, rules);
+}
+
+function setFieldError(ctl: HTMLElement, msg: string): void {
+  const field = ctl.closest('.dsh-field');
+  if (!field) return;
+  let err = field.querySelector<HTMLElement>('.dsh-field-err');
+  if (!err) {
+    err = document.createElement('div');
+    err.className = 'dsh-field-err';
+    field.appendChild(err);
+  }
+  err.textContent = msg;
+  field.classList.add('invalid');
+}
+
+function clearFieldError(ctl: HTMLElement): void {
+  const field = ctl.closest('.dsh-field');
+  field?.querySelector('.dsh-field-err')?.remove();
+  field?.classList.remove('invalid');
+}
+
+function checkField(ctl: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, spec: FieldVal): boolean {
+  clearFieldError(ctl);
+  const v = (ctl.value || '').trim();
+  const isSelect = ctl.tagName === 'SELECT';
+  if (isSelect && spec.req && !ctl.value) {
+    setFieldError(ctl, spec.msg || 'Please choose an option.');
+    return false;
+  }
+  if (spec.req && !isSelect && !v) {
+    setFieldError(ctl, spec.msg || 'Please fill this in before continuing.');
+    return false;
+  }
+  if (v && !isSelect) {
+    if (spec.min !== undefined && v.length < spec.min) {
+      setFieldError(ctl, `Needs at least ${spec.min} characters.`);
+      return false;
+    }
+    if (spec.max !== undefined && v.length > spec.max) {
+      setFieldError(ctl, `Keep it under ${spec.max} characters.`);
+      return false;
+    }
+  }
+  if (v && spec.ph && !spec.ph.test(v)) {
+    setFieldError(ctl, spec.msg || 'Please check the format — e.g. +263 77 123 4567.');
+    return false;
+  }
+  if (v && spec.num) {
+    const n = parseFloat(v);
+    const range = spec.num.min !== undefined && spec.num.max !== undefined ? ` between ${spec.num.min} and ${spec.num.max}` : spec.num.min !== undefined ? ` of at least ${spec.num.min}` : spec.num.max !== undefined ? ` up to ${spec.num.max}` : '';
+    if (Number.isNaN(n) || (spec.num.min !== undefined && n < spec.num.min) || (spec.num.max !== undefined && n > spec.num.max)) {
+      setFieldError(ctl, spec.msg || `Enter a number${range}.`);
+      return false;
+    }
+    if (spec.num.step !== undefined && spec.num.step > 0 && !Number.isNaN(n)) {
+      ctl.value = String((Math.round(n / spec.num.step) * spec.num.step).toFixed(2).replace(/\.?0+$/, ''));
+    }
+  }
+  return true;
+}
+
+function updatePwCheck(box: HTMLElement, value: string): void {
+  const checks: [string, boolean][] = [
+    ['len', value.length >= 8],
+    ['num', /\d/.test(value)],
+    ['up', /[A-Z]/.test(value)],
+    ['sym', /[^A-Za-z0-9]/.test(value)],
+  ];
+  checks.forEach(([k, ok]) => box.querySelector<HTMLElement>(`[data-pw="${k}"]`)?.classList.toggle('ok', ok));
+}
+
+function validateForm(form: HTMLElement, silent: boolean): boolean {
+  const ctrls = [...form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select')];
+  let ok = true;
+  let firstBad: HTMLElement | null = null;
+  for (const c of ctrls) {
+    if (!c.dataset.val) continue;
+    const spec = FORM_RULES[c.dataset.val];
+    if (!spec) continue;
+    const valid = silent || c.dataset.touched === '1' ? checkField(c, spec) : true;
+    if (!valid) {
+      ok = false;
+      if (!firstBad) firstBad = c.closest('.dsh-field') as HTMLElement | null;
+    }
+  }
+  if (!ok && firstBad) firstBad.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  return ok;
+}
+
+function updateSubmit(form: HTMLElement): void {
+  const btnEl = form.querySelector<HTMLButtonElement>('[data-submit]');
+  if (btnEl) {
+    const ok = validateForm(form, true);
+    btnEl.disabled = !ok;
+    btnEl.title = ok ? '' : 'Complete the highlighted fields to continue';
+  }
+}
+
+function ensureCounters(form: HTMLElement): void {
+  form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('[data-counter]').forEach((el) => {
+    const max = parseInt(el.getAttribute('maxlength') || '160', 10);
+    const field = el.closest('.dsh-field');
+    const key = el.getAttribute('data-counter') || '';
+    if (field && !field.querySelector('[data-count-for]')) {
+      const badge = document.createElement('span');
+      badge.className = 'dsh-count';
+      badge.setAttribute('data-count-for', key);
+      badge.textContent = `0/${max}`;
+      field.appendChild(badge);
+    }
+    const out = field?.querySelector<HTMLElement>(`[data-count-for="${key}"]`);
+    if (out) out.textContent = `${el.value.length}/${max}`;
+  });
+}
+
+function beginSubmit(form: HTMLElement): boolean {
+  if (!validateForm(form, false)) {
+    toast('Please fix the highlighted fields before saving', 'error');
+    return false;
+  }
+  if (form.hasAttribute('data-submitting')) return false;
+  form.setAttribute('data-submitting', '');
+  const btnEl = form.querySelector<HTMLButtonElement>('[data-submit]');
+  if (btnEl) {
+    btnEl.disabled = true;
+    btnEl.setAttribute('data-reset', btnEl.textContent || 'Save');
+    btnEl.innerHTML = spinner('Saving');
+  }
+  form.dispatchEvent(new CustomEvent('dsh-valid-submit', { bubbles: true }));
+  return true;
+}
+
+export function restoreSubmit(form: HTMLElement): void {
+  form.removeAttribute('data-submitting');
+  const btnEl = form.querySelector<HTMLButtonElement>('[data-submit]');
+  if (btnEl) {
+    btnEl.disabled = false;
+    btnEl.innerHTML = btnEl.getAttribute('data-reset') || 'Save';
+  }
+}
+
+export function submitBtn(label: string, variant: string, key: string): string {
+  return `<button type="button" class="dsh-btn ${variant}" data-submit data-form-submit="${key}">${label}</button>`;
+}
+
+export function onValidSubmit(key: string, fn: (form: HTMLElement) => void): void {
+  if (typeof document === 'undefined') return;
+  const listener = (e: Event): void => {
+    const form = (e.target as HTMLElement).closest<HTMLElement>('[data-form]');
+    const btn = document.querySelector<HTMLElement>(`[data-form-submit="${key}"]`);
+    if (form && btn && form.contains(btn)) fn(form);
+  };
+  document.addEventListener('dsh-valid-submit', listener as EventListener);
+}
+
+export function wireForms(root: HTMLElement): void {
+  root.addEventListener('input', (e) => {
+    const t = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+    if (!t || !t.isConnected || !t.closest('[data-form]')) return;
+    const form = t.closest<HTMLElement>('[data-form]')!;
+    t.dataset.touched = '1';
+    if (t.dataset.counter !== undefined) {
+      const max = parseInt(t.getAttribute('maxlength') || '160', 10);
+      const out = form.querySelector<HTMLElement>(`[data-count-for="${t.dataset.counter}"]`);
+      if (out) out.textContent = `${(t as HTMLInputElement).value.length}/${max}`;
+    }
+    if (t.dataset.val) {
+      const spec = FORM_RULES[t.dataset.val];
+      if (spec) checkField(t, spec);
+    }
+    if (t.dataset.pw !== undefined) {
+      const box = form.querySelector<HTMLElement>('[data-pw-check]');
+      if (box) updatePwCheck(box, (t as HTMLInputElement).value);
+    }
+    updateSubmit(form);
+  });
+  root.addEventListener('submit', (e) => {
+    const form = (e.target as HTMLElement).closest<HTMLElement>('[data-form]');
+    if (form) {
+      e.preventDefault();
+      beginSubmit(form);
+    }
+  });
+  root.addEventListener('click', (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLElement>('[data-submit]');
+    if (b) {
+      e.preventDefault();
+      const form = b.closest<HTMLElement>('[data-form]');
+      if (form) beginSubmit(form);
     }
   });
 }
@@ -1725,24 +2250,484 @@ export function freightFeed(loads: Consignment[], limit = 5, target = '#deliveri
     </div>`).join('')}</div>`;
 }
 
+/* ============================================================
+   ZVIDA physical documents — Purchase Order, Delivery Note,
+   Invoice (per-party pricing) and Payment Confirmation.
+   Issued automatically as a contract moves through milestones.
+   ============================================================ */
+type ZdocRole = 'supplier' | 'receiver' | 'driver' | 'admin';
+type ZdocKind = 'PO' | 'DN' | 'INV' | 'PC' | 'POD';
+
+const ZDOC_STYLES = `
+.z-doc{font-family:Georgia,'Times New Roman',serif;color:#111;line-height:1.5;background:#fff;margin:0 auto;max-width:760px;}
+.z-inner{padding:4px 2px;}
+.z-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:3px double #1a1a1a;padding-bottom:14px;margin-bottom:14px;}
+.z-brand{font-size:27px;font-weight:700;letter-spacing:.4px;color:#0f5132;}
+.z-tag{font-size:12.5px;color:#556;font-style:italic;margin-top:2px;}
+.z-addr{font-size:11.5px;color:#444;margin-top:7px;line-height:1.6;}
+.z-docno{text-align:right;flex:none;}
+.z-docno-kind{display:block;font-size:20px;font-weight:700;color:#0f5132;text-transform:uppercase;letter-spacing:1.2px;}
+.z-docno-num{display:block;font-size:12.5px;color:#333;font-weight:600;margin-top:4px;letter-spacing:.5px;}
+.z-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px 20px;background:#f7f7f3;border:1px solid #ddd;border-radius:8px;padding:12px 15px;margin-bottom:14px;}
+.z-grid>div{display:flex;flex-direction:column;gap:1px;}
+.z-k{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#777;font-weight:600;}
+.z-v{font-size:13.5px;font-weight:600;color:#111;}
+.z-v.strong{color:#0f5132;font-size:15px;}
+.z-parties{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;}
+.z-parties>div{border:1px solid #ddd;border-radius:8px;padding:12px 15px;background:#fbfbf8;}
+.z-role{font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:#777;font-weight:600;margin-bottom:4px;}
+.z-name{font-size:15px;font-weight:700;color:#111;}
+.z-sub{font-size:12px;color:#555;margin-top:2px;}
+.z-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:14px;}
+.z-table th{background:#0f5132;color:#fff;text-align:left;padding:8px 10px;font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600;}
+.z-table th.r,.z-table td.r{text-align:right;}
+.z-table td{padding:9px 10px;border-bottom:1px solid #e4e4de;color:#111;}
+.z-table tfoot td{font-weight:700;background:#f2f2ec;font-size:14px;border-bottom:none;}
+.z-inwords{border:1px solid #ddd;border-left:4px solid #0f5132;border-radius:6px;padding:10px 14px;margin-bottom:14px;display:flex;flex-direction:column;gap:3px;background:#fbfbf8;}
+.z-note{font-size:12px;color:#555;margin-bottom:18px;}
+.z-signs{display:flex;justify-content:space-between;gap:18px;margin:26px 0 10px;}
+.z-sign{flex:1;text-align:center;}
+.z-line{border-bottom:1.5px solid #111;margin-bottom:8px;}
+.z-sign-label{font-size:12px;font-weight:700;color:#111;}
+.z-sign-sub{font-size:11px;color:#666;margin-top:2px;}
+.z-foot{font-size:10.5px;color:#777;border-top:1px solid #ccc;padding-top:10px;margin-top:22px;text-align:center;}
+.z-print{background:#fff;margin:0;padding:30px;}
+@media print{.z-print{background:#fff;padding:0;}body{print-color-adjust:exact;-webkit-print-color-adjust:exact;}}`;
+
+type ZdocMetaOf = { label: string; prefix: string; file: string };
+const ZDOC_META: Record<ZdocKind, ZdocMetaOf> = {
+  PO: { label: 'Purchase Order', prefix: 'PO', file: 'Purchase_Order' },
+  DN: { label: 'Delivery Note', prefix: 'DN', file: 'Delivery_Note' },
+  INV: { label: 'Invoice', prefix: 'INV', file: 'Invoice' },
+  PC: { label: 'Payment Confirmation', prefix: 'PC', file: 'Payment_Confirmation' },
+  POD: { label: 'Proof of Delivery', prefix: 'POD', file: 'Proof_of_Delivery' },
+};
+
+const ZDOC_TRIGGER: Record<ZdocKind, string[]> = {
+  PO: ['PENDING', 'LOADING', 'WEIGHED_1', 'IN_TRANSIT', 'OFFLOADING', 'WEIGHED_2', 'PENDING_PAYMENT', 'PAID'],
+  DN: ['LOADING', 'WEIGHED_1', 'IN_TRANSIT', 'OFFLOADING', 'WEIGHED_2', 'PENDING_PAYMENT', 'PAID'],
+  INV: ['PENDING_PAYMENT', 'PAID'],
+  PC: ['PAID'],
+  POD: ['OFFLOADING', 'WEIGHED_2', 'PENDING_PAYMENT', 'PAID'],
+};
+
+interface ZdocDef {
+  key: string;
+  kind: ZdocKind;
+  label: string;
+  name: string;
+  meta: string;
+  sheet: string;
+  print: string;
+}
+
+const ZDOCS: Record<string, ZdocDef> = {};
+
+function znum(l: Consignment, prefix: string): string {
+  return prefix + '-2026-' + String(l.contract.replace(/\D/g, '')).padStart(4, '0');
+}
+
+function zqty(l: Consignment): string {
+  return l.qty ? (l.qty / 1000).toFixed(2) + ' t' : '—';
+}
+
+function zpriceFor(l: Consignment, party: 'supplier' | 'offtaker'): number {
+  return party === 'offtaker' ? Math.max(1, Math.round(l.unitPrice * 1.2)) : l.unitPrice;
+}
+
+function zamountFor(l: Consignment, party: 'supplier' | 'offtaker'): number {
+  return l.qty ? Math.round((l.qty / 1000) * zpriceFor(l, party)) : 0;
+}
+
+function zinWords(amount: number): string {
+  if (!amount) return 'To be calculated on weigh-out';
+  const ones = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen', 'Seventeen', 'Eighteen', 'Nineteen'];
+  const tens = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
+  const three = (n: number): string => {
+    const parts: string[] = [];
+    const h = Math.floor(n / 100);
+    const t = n % 100;
+    if (h) parts.push(ones[h] + ' Hundred');
+    if (t) {
+      if (t < 20) parts.push(ones[t]);
+      else parts.push(tens[Math.floor(t / 10)] + (t % 10 ? '-' + ones[t % 10] : ''));
+    }
+    return parts.join(' ');
+  };
+  const whole = Math.floor(amount);
+  const cents = Math.round((amount - whole) * 100);
+  let out = '';
+  const millions = Math.floor(whole / 1000000);
+  const thousands = Math.floor((whole % 1000000) / 1000);
+  const rest = whole % 1000;
+  if (millions) out += three(millions) + ' Million ';
+  if (thousands) out += three(thousands) + ' Thousand ';
+  if (rest || !out) out += three(rest);
+  out = out.trim() + ' US Dollars';
+  if (cents) out += ' and ' + String(cents).padStart(2, '0') + '/100 Cents';
+  return out;
+}
+
+function zdocSign(label: string, sub: string): string {
+  return `<div class="z-sign"><div class="z-line"></div><div class="z-sign-label">${label}</div><div class="z-sign-sub">${sub}</div></div>`;
+}
+
+function zdocHead(m: ZdocMetaOf, num: string): string {
+  return `
+    <div class="z-head">
+      <div>
+        <div class="z-brand">ZVIDA Agro Traders</div>
+        <div class="z-tag">Giving Value to Your Harvest</div>
+        <div class="z-addr">5417 Cranbrook, Ruwa, Harare<br/>+263 776 571 481 · +263 717 907 738</div>
+      </div>
+      <div class="z-docno"><span class="z-docno-kind">${m.label}</span><span class="z-docno-num">${num}</span></div>
+    </div>`;
+}
+
+function zdocShell(l: Consignment, m: ZdocMetaOf, num: string, body: string, foot: string): string {
+  return `
+    ${zdocHead(m, num)}
+    <div class="z-grid">
+      <div><span class="z-k">Contract</span><span class="z-v">${l.contract}</span></div>
+      <div><span class="z-k">Date</span><span class="z-v">${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}</span></div>
+      <div><span class="z-k">Commodity</span><span class="z-v">${l.commodity}</span></div>
+      <div><span class="z-k">Terms</span><span class="z-v">${l.payTerm} · ${loadTermNote(l)}</span></div>
+    </div>
+    ${body}
+    ${foot}
+    <div class="z-foot">Issued electronically by ZVIDA Agro Traders · 5417 Cranbrook, Ruwa, Harare · +263 776 571 481 · +263 717 907 738. Valid without a wet signature unless one is required. Supplier settlement follows the agreed ${l.payTerm} terms after the second weight.</div>`;
+}
+
+function zdocPo(l: Consignment): { body: string; foot: string } {
+  const price = zpriceFor(l, 'supplier');
+  const amount = zamountFor(l, 'supplier');
+  const body = `
+    <div class="z-parties">
+      <div><div class="z-role">Buyer</div><div class="z-name">ZVIDA Agro Traders</div><div class="z-sub">5417 Cranbrook, Ruwa, Harare</div></div>
+      <div><div class="z-role">Supplier</div><div class="z-name">${l.supplier}</div><div class="z-sub">Collection: ${l.from}</div></div>
+    </div>
+    <table class="z-table">
+      <thead><tr><th>Commodity</th><th>Quantity</th><th>Rate (USD/t)</th><th class="r">Amount</th></tr></thead>
+      <tbody><tr><td>${l.commodity}</td><td>${zqty(l)}</td><td>${loadMoney(price)}</td><td class="r">${l.qty ? loadMoney(amount) : '—'}</td></tr></tbody>
+      <tfoot><tr><td colspan="3" class="r">Total</td><td class="r">${l.qty ? loadMoney(amount) : 'To be weighed'}</td></tr></tfoot>
+    </table>
+    <div class="z-note">Delivery point: <b>${l.dest}</b> · Order <b>${l.order}</b> · PO <b>${l.poRef}</b>. This order is accepted by the supplier signing at the collection point.</div>`;
+  const foot = `
+    <div class="z-signs">
+      ${zdocSign('Supplier Signature', 'Accepted on collection · ID verified')}
+      ${zdocSign('ZVIDA Brokerage', 'Authorised by ZVIDA')}
+    </div>`;
+  return { body, foot };
+}
+
+function zdocDn(l: Consignment): { body: string; foot: string } {
+  const body = `
+    <div class="z-parties">
+      <div><div class="z-role">From</div><div class="z-name">${l.supplier}</div><div class="z-sub">${l.from}</div></div>
+      <div><div class="z-role">To</div><div class="z-name">${l.receiver}</div><div class="z-sub">${l.dest}</div></div>
+    </div>
+    <div class="z-grid">
+      <div><span class="z-k">Truck</span><span class="z-v">${l.truck || '—'}</span></div>
+      <div><span class="z-k">Trailer</span><span class="z-v">${l.trailer || '—'}</span></div>
+      <div><span class="z-k">Driver</span><span class="z-v">${l.driver || '—'}${l.phone ? ' · ' + l.phone : ''}</span></div>
+      <div><span class="z-k">Carrier</span><span class="z-v">ZVIDA Logistics</span></div>
+    </div>
+    <table class="z-table">
+      <thead><tr><th>Commodity</th><th>First weight</th><th>Second weight</th><th class="r">Net</th></tr></thead>
+      <tbody><tr><td>${l.commodity}</td><td>${l.weight1 ? l.weight1.toLocaleString() + ' kg' : '—'}</td><td>${l.weight2 ? l.weight2.toLocaleString() + ' kg' : '—'}</td><td class="r">${zqty(l)}</td></tr></tbody>
+    </table>
+    <div class="z-note">Weighbridge slip: <b>${l.slip || 'WB-' + l.ref.slice(-4)}</b> · Load reference <b>${l.ref}</b>. Signed by the supplier when issued and by the driver when the load is accepted for carriage.</div>`;
+  const foot = `
+    <div class="z-signs">
+      ${zdocSign('Supplier Signature', 'Issued at loading point')}
+      ${zdocSign('Driver Signature', 'Received for carriage')}
+      ${zdocSign('Receiver Signature', 'Confirmed on arrival')}
+    </div>`;
+  return { body, foot };
+}
+
+function zdocInv(l: Consignment, party: 'supplier' | 'offtaker'): { body: string; foot: string } {
+  const price = zpriceFor(l, party);
+  const amount = zamountFor(l, party);
+  const billTo = party === 'offtaker' ? l.receiver : l.supplier;
+  const body = `
+    <div class="z-parties">
+      <div><div class="z-role">Issued by</div><div class="z-name">ZVIDA Agro Traders</div><div class="z-sub">5417 Cranbrook, Ruwa, Harare</div></div>
+      <div><div class="z-role">Bill to</div><div class="z-name">${billTo}</div><div class="z-sub">Contract ${l.contract} · ${l.order}</div></div>
+    </div>
+    <table class="z-table">
+      <thead><tr><th>Description</th><th>Quantity</th><th>Rate (USD/t)</th><th class="r">Amount</th></tr></thead>
+      <tbody><tr><td>${l.commodity} — ${party === 'offtaker' ? 'delivered to ' + l.dest : 'delivered from ' + l.from}</td><td>${zqty(l)}</td><td>${loadMoney(price)}</td><td class="r">${l.qty ? loadMoney(amount) : '—'}</td></tr></tbody>
+      <tfoot><tr><td colspan="3" class="r">Total</td><td class="r">${l.qty ? loadMoney(amount) : 'To be weighed'}</td></tr></tfoot>
+    </table>
+    <div class="z-inwords"><span class="z-k">Amount in words</span><span class="z-v">${zinWords(amount)}</span></div>
+    <div class="z-note">${party === 'offtaker' ? 'Payable to ZVIDA Agro Traders' : 'Settlement to the supplier wallet'} · ${l.payTerm} · due ${l.due} · generated at the payment milestone.</div>`;
+  const foot = `
+    <div class="z-signs">
+      ${zdocSign('ZVIDA Brokerage', 'Auto-issued · ' + (party === 'offtaker' ? 'offtaker invoice' : 'supplier invoice'))}
+    </div>`;
+  return { body, foot };
+}
+
+function zdocPc(l: Consignment): { body: string; foot: string } {
+  const amount = zamountFor(l, 'supplier');
+  const body = `
+    <div class="z-grid">
+      <div><span class="z-k">Paid to</span><span class="z-v">${l.supplier}</span></div>
+      <div><span class="z-k">Amount</span><span class="z-v strong">${l.qty ? loadMoney(amount) : '—'}</span></div>
+      <div><span class="z-k">Method</span><span class="z-v">ZVIDA Wallet · Bank Transfer</span></div>
+      <div><span class="z-k">Load</span><span class="z-v">${l.ref} · ${l.contract}</span></div>
+    </div>
+    <div class="z-inwords"><span class="z-k">Amount in words</span><span class="z-v">${zinWords(amount)}</span></div>
+    <table class="z-table">
+      <thead><tr><th>Commodity</th><th>Net quantity</th><th>Rate (USD/t)</th><th class="r">Amount</th></tr></thead>
+      <tbody><tr><td>${l.commodity}</td><td>${zqty(l)}</td><td>${loadMoney(zpriceFor(l, 'supplier'))}</td><td class="r">${l.qty ? loadMoney(amount) : '—'}</td></tr></tbody>
+    </table>
+    <div class="z-note">Reference <b>${l.order}</b> · released ${l.due} · ${loadTermNote(l)}. This confirms that the full amount has been released to the supplier and the contract is closed.</div>`;
+  const foot = `
+    <div class="z-signs">
+      ${zdocSign('Supplier Signature', 'Payment received · balance zero')}
+      ${zdocSign('ZVIDA Brokerage', 'Released by ZVIDA')}
+      ${zdocSign('Witness', 'Verified by an independent witness')}
+    </div>`;
+  return { body, foot };
+}
+
+function zdocPod(l: Consignment): { body: string; foot: string } {
+  const body = `
+    <div class="z-parties">
+      <div><div class="z-role">Delivered by</div><div class="z-name">${l.driver || 'ZVIDA Logistics'}</div><div class="z-sub">Truck ${l.truck || '—'}${l.trailer ? ' · ' + l.trailer : ''}</div></div>
+      <div><div class="z-role">Delivered to</div><div class="z-name">${l.receiver}</div><div class="z-sub">${l.dest}</div></div>
+    </div>
+    <table class="z-table">
+      <thead><tr><th>Commodity</th><th>Net quantity</th><th class="r">Reference</th></tr></thead>
+      <tbody><tr><td>${l.commodity}</td><td>${zqty(l)}</td><td class="r">${l.ref}</td></tr></tbody>
+    </table>
+    <div class="z-note">Signed electronically at the point of delivery${l.slip ? ' · weighbridge slip ' + l.slip : ''}.</div>`;
+  const foot = `
+    <div class="z-signs">
+      ${zdocSign('Driver Signature', l.driver || 'Driver')}
+      ${zdocSign('Receiver Signature', 'Received in good order')}
+    </div>`;
+  return { body, foot };
+}
+
+function zdocAssemble(l: Consignment, kind: ZdocKind, num: string, body: string, foot: string): { sheet: string; print: string; name: string } {
+  const m = ZDOC_META[kind];
+  const inner = zdocShell(l, m, num, body, foot);
+  const sheet = `<div class="z-doc"><div class="z-inner">${inner}</div></div>`;
+  const name = `${m.file}_${num.replace('#', '')}.html`;
+  const print = `<!doctype html><html><head><meta charset="utf-8"><title>${num} — ${m.label}</title><style>${ZDOC_STYLES}</style></head><body class="z-print">${sheet}</body></html>`;
+  return { sheet, print, name };
+}
+
+function zdocRegister(l: Consignment): void {
+  const put = (key: string, kind: ZdocKind, num: string, body: string, foot: string, meta: string): void => {
+    const { sheet, print, name } = zdocAssemble(l, kind, num, body, foot);
+    ZDOCS[key] = { key, kind, label: ZDOC_META[kind].label, name, meta, sheet, print };
+    registerDownload(key, name, sheet, 'text/html');
+  };
+  const po = zdocPo(l);
+  put(l.id + '-po', 'PO', znum(l, 'PO'), po.body, po.foot, `Contract ${l.contract} · ${l.commodity} · accept & sign at collection`);
+  const dn = zdocDn(l);
+  put(l.id + '-dn', 'DN', znum(l, 'DN'), dn.body, dn.foot, `Contract ${l.contract} · ${l.from} → ${l.dest} · signed on dispatch`);
+  const invS = zdocInv(l, 'supplier');
+  put(l.id + '-inv-s', 'INV', znum(l, 'INV') + '-S', invS.body, invS.foot, `Contract ${l.contract} · supplier rate ${loadMoney(zpriceFor(l, 'supplier'))}/t`);
+  const invO = zdocInv(l, 'offtaker');
+  put(l.id + '-inv-o', 'INV', znum(l, 'INV') + '-O', invO.body, invO.foot, `Contract ${l.contract} · offtaker rate ${loadMoney(zpriceFor(l, 'offtaker'))}/t`);
+  const legacyInv = ZDOCS[l.id + '-inv-o'];
+  if (legacyInv) registerDownload(l.id + '-invoice', `Invoice_${l.ref}.html`, legacyInv.sheet, 'text/html');
+  const pc = zdocPc(l);
+  put(l.id + '-pc', 'PC', znum(l, 'PC'), pc.body, pc.foot, `Contract ${l.contract} · ${loadMoney(zamountFor(l, 'supplier'))} received`);
+  const pod = zdocPod(l);
+  put(l.id + '-pod', 'POD', znum(l, 'POD'), pod.body, pod.foot, `Contract ${l.contract} · signed on delivery`);
+}
+
+function zdocAvail(l: Consignment, role: ZdocRole): ZdocKind[] {
+  if (l.status === 'CANCELLED') return [];
+  const out: ZdocKind[] = [];
+  if (role !== 'driver' && ZDOC_TRIGGER.PO.includes(l.status)) out.push('PO');
+  if (ZDOC_TRIGGER.DN.includes(l.status)) out.push('DN');
+  if (role !== 'driver' && ZDOC_TRIGGER.INV.includes(l.status)) out.push('INV');
+  if (role !== 'driver' && ZDOC_TRIGGER.PC.includes(l.status)) out.push('PC');
+  if (role === 'driver' && ZDOC_TRIGGER.POD.includes(l.status)) out.push('POD');
+  return out;
+}
+
+function zdocDocKey(l: Consignment, kind: ZdocKind, role: ZdocRole): string {
+  if (kind === 'INV') return role === 'supplier' ? l.id + '-inv-s' : l.id + '-inv-o';
+  return l.id + '-' + kind.toLowerCase();
+}
+
+function zdocBtn(label: string, key: string): string {
+  const z = ZDOCS[key];
+  if (!z) return '';
+  return `<span class="dsh-zdoc-pill">${downloadBtn(label, 'ghost sm', key)}${jsBtn('View', 'ghost sm', 'zdocView', key, 'Opening ' + z.label)}</span>`;
+}
+
+function zdocPills(l: Consignment, role: ZdocRole): string {
+  zdocRegister(l);
+  const kinds = zdocAvail(l, role);
+  if (!kinds.length) return '';
+  const btns: string[] = [];
+  for (const k of kinds) {
+    if (k === 'INV' && role === 'admin') {
+      btns.push(zdocBtn('Invoice · Supplier Rate', l.id + '-inv-s'));
+      btns.push(zdocBtn('Invoice · Offtaker Rate', l.id + '-inv-o'));
+    } else {
+      btns.push(zdocBtn(k === 'INV' ? 'Invoice' : ZDOC_META[k].label, zdocDocKey(l, k, role)));
+    }
+  }
+  return `<div class="dsh-lg-docs">${btns.join('')}</div>`;
+}
+
+function zdocRows(loads: Consignment[], role: ZdocRole): { l: Consignment; keys: { label: string; key: string }[] }[] {
+  const rows: { l: Consignment; keys: { label: string; key: string }[] }[] = [];
+  for (const l of loads) {
+    const keys: { label: string; key: string }[] = [];
+    for (const k of zdocAvail(l, role)) {
+      if (k === 'INV' && role === 'admin') {
+        keys.push({ label: 'Invoice · Supplier Rate', key: l.id + '-inv-s' });
+        keys.push({ label: 'Invoice · Offtaker Rate', key: l.id + '-inv-o' });
+      } else {
+        keys.push({ label: k === 'INV' ? 'Invoice' : ZDOC_META[k].label, key: zdocDocKey(l, k, role) });
+      }
+    }
+    if (keys.length) rows.push({ l, keys });
+  }
+  return rows;
+}
+
+function zdocRow(key: string): string {
+  const z = ZDOCS[key];
+  if (!z) return '';
+  return `<div class="dsh-doc">
+    <span class="dsh-doc-ico">${svg(ICON.file)}</span>
+    <div>
+      <div class="dsh-doc-name">${z.label} · ${z.name.replace(/\.html$/, '')}</div>
+      <div class="dsh-doc-meta">${z.meta}</div>
+    </div>
+    <span class="dsh-doc-actions">${jsBtn('View', 'ghost sm', 'zdocView', key, 'Opening ' + z.label)}${downloadBtn('Download', 'ghost sm', key)}</span>
+  </div>`;
+}
+
+function zdocLoads(role: ZdocRole, who: string): Consignment[] {
+  return loadCatalog()
+    .reverse()
+    .filter((l) => {
+      if (role === 'admin') return true;
+      if (role === 'supplier') return l.supplier.includes(who);
+      if (role === 'receiver') return l.receiver.includes(who);
+      return l.driver.includes(who);
+    });
+}
+
+function zdocCollectKeys(loads: Consignment[], role: ZdocRole): string[] {
+  const keys: string[] = [];
+  for (const row of zdocRows(loads, role)) for (const k of row.keys) keys.push(k.key);
+  return keys;
+}
+
+export function zdocDocuments(role: ZdocRole, who = ''): string {
+  const loads = zdocLoads(role, who);
+  loads.forEach((l) => zdocRegister(l));
+  const rows = zdocRows(loads, role);
+  const groups = new Map<string, { l: Consignment; keys: { label: string; key: string }[] }[]>();
+  for (const r of rows) {
+    const arr = groups.get(r.l.contract) || [];
+    arr.push(r);
+    groups.set(r.l.contract, arr);
+  }
+  const openCount = loads.filter((l) => !['PAID', 'CANCELLED'].includes(l.status)).length;
+  const pendingPay = loads.filter((l) => l.status === 'PENDING_PAYMENT').length;
+  const settled = loads.filter((l) => l.status === 'PAID').length;
+  const total = rows.reduce((s, r) => s + r.keys.length, 0);
+  const podCount = rows.filter((r) => r.keys.some((k) => k.key.endsWith('-pod'))).length;
+  const contractHref = role === 'driver' ? '#trips' : role === 'admin' ? '#deliveries' : '#contracts';
+  const lead = role === 'driver'
+    ? `Trip documents are issued as each load moves: the delivery note at loading and the proof of delivery when the load is signed off.`
+    : role === 'admin'
+      ? `Every contract document lives here — the purchase order, delivery note, both invoice copies (supplier and offtaker rates) and the payment confirmation. Q3 tax reporting can be exported per contract.`
+      : `Physical documents are issued automatically as each contract moves: the purchase order on acceptance, the delivery note at loading, the invoice at the payment milestone and the payment confirmation when settled.`;
+  const kpisBlock = role === 'driver'
+    ? kpis([
+        { label: 'Trips', value: loads.length, icon: ICON.trips, delta: total + ' documents available', up: true, spark: [1, 2, 2, 3, 3, 4, Math.max(loads.length, 1)], foot: 'Your consignments', open: '#trips' },
+        { label: 'Active', value: openCount, icon: ICON.truck, delta: 'In progress', up: false, spark: [0, 1, 1, 2, 1, 2, Math.max(openCount, 1)], foot: 'Not yet delivered', open: '#trips' },
+        { label: 'Proof of Delivery', value: podCount, icon: ICON.check, delta: 'Signed on delivery', up: true, spark: [0, 0, 1, 1, 2, 2, Math.max(podCount, 1)], foot: 'Closed trips', open: '#documents' },
+      ])
+    : kpis([
+        { label: 'Contracts', value: groups.size, icon: ICON.contracts, delta: total + ' documents available', up: true, spark: [1, 2, 2, 3, 4, 5, Math.max(groups.size, 1)], foot: 'Across this season', open: role === 'admin' ? '#deliveries' : '#contracts' },
+        { label: 'Awaiting ZVIDA Payment', value: pendingPay, icon: ICON.payments, delta: 'Invoice issued at milestone', up: false, spark: [0, 1, 1, 2, 1, 2, Math.max(pendingPay, 1)], foot: 'Payment pending', open: role === 'admin' ? '#payments' : role === 'receiver' ? '#deliveries' : '#contracts' },
+        { label: 'Settled', value: settled, icon: ICON.wallet, delta: 'Payment confirmations issued', up: true, spark: [1, 1, 2, 2, 3, 3, Math.max(settled, 1)], foot: 'Closed contracts', open: role === 'admin' ? '#payments' : role === 'receiver' ? '#deliveries' : '#contracts' },
+      ]);
+  return `
+    ${kpisBlock}
+    ${banner('info', lead)}
+    ${rows.length ? Array.from(groups.entries()).map(([contract, ls]) => `
+      ${sec(`${contract} · ${ls[0].l.commodity}`, 'Open contract', 'Opening contract', ls.length, contractHref)}
+      ${panel({
+        body: `<div style="padding:0 6px">${ls.flatMap((r) => r.keys.map((k) => zdocRow(k.key))).join('')}</div>`,
+        flush: true,
+      })}
+    `).join('') : banner('ok', 'No documents available yet — documents appear as your contracts move through their milestones.')}
+    ${rows.length ? `${jsBtn('Download All', 'primary sm', 'zdocAll', role + '|' + who, 'Downloading all documents')}` : ''}
+  `;
+}
+
+export function wireZdoc(): void {
+  if (JS.zdocView) return;
+  JS.zdocView = (key) => {
+    const z = ZDOCS[key];
+    if (!z) return;
+    openDetail(z.label + ' · ' + z.name.replace(/\.html$/, ''), `<div class="z-sheet"><style>${ZDOC_STYLES}</style>${z.sheet}</div>`, `${downloadBtn('Download', 'primary sm', key)}${jsBtn('Print / Save as PDF', 'ghost sm', 'zdocPrint', key, 'Opening print dialog')}`);
+  };
+  JS.zdocPrint = (key) => {
+    const z = ZDOCS[key];
+    if (!z) return;
+    const w = window.open('', '_blank', 'width=920,height=1180');
+    if (!w) {
+      toast('Pop-up blocked — allow pop-ups to print', 'warn');
+      return;
+    }
+    w.document.write(z.print);
+    w.document.close();
+    w.focus();
+    setTimeout(() => {
+      try {
+        w.print();
+      } catch {
+        /* ignore */
+      }
+    }, 300);
+  };
+  JS.zdocAll = (payload) => {
+    const [role, who] = payload.split('|');
+    const loads = zdocLoads(role as ZdocRole, who);
+    loads.forEach((l) => zdocRegister(l));
+    const keys = zdocCollectKeys(loads, role as ZdocRole);
+    keys.forEach((key, i) => window.setTimeout(() => downloadNow(key), i * 160));
+    toast(`Downloading ${keys.length} documents`);
+  };
+}
+
 function lgFoot(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admin'): string {
   const s = l.status;
   const call = (who: string) => jsBtn('Call', 'ghost sm', 'lgCall', who + '|' + l.phone, `Dialing ${who}…`);
   if (role === 'admin') {
-    if (s === 'PENDING_PAYMENT') return `${jsBtn('Release Payment', 'primary sm', 'lgSettle', l.id, `${loadMoney(l.amount)} released to ${l.supplier}`)}${jsBtn('Hold', 'ghost sm', 'lgAction', l.id + ':note', 'Payment held')}${call('Supplier ' + l.supplier)}`;
-    if (s === 'PENDING' && !l.driver) return `${jsBtn('Assign Driver', 'primary sm', 'lgAction', l.id + ':assign', 'Driver John Doe assigned')}${call('Supplier ' + l.supplier)}`;
-    if (s === 'IN_TRANSIT' || s === 'OFFLOADING') return `${jsBtn('Verify Weights', 'ghost sm', 'lgAction', l.id + ':note', 'Weight verification queued')}${call('Driver ' + l.driver)}`;
-    return call('Supplier ' + l.supplier);
+    if (s === 'PENDING_PAYMENT') return `${jsBtn('Release Payment', 'primary sm', 'lgSettle', l.id, `${loadMoney(l.amount)} released to ${l.supplier}`)}${jsBtn('Hold', 'ghost sm', 'lgAction', l.id + ':note', 'Payment held')}${call('Supplier ' + l.supplier)}${zdocPills(l, 'admin')}`;
+    if (s === 'PENDING' && !l.driver) return `${jsBtn('Assign Driver', 'primary sm', 'lgAction', l.id + ':assign', 'Driver John Doe assigned')}${call('Supplier ' + l.supplier)}${zdocPills(l, 'admin')}`;
+    if (s === 'IN_TRANSIT' || s === 'OFFLOADING') return `${jsBtn('Verify Weights', 'ghost sm', 'lgAction', l.id + ':note', 'Weight verification queued')}${call('Driver ' + l.driver)}${zdocPills(l, 'admin')}`;
+    return `${call('Supplier ' + l.supplier)}${zdocPills(l, 'admin')}`;
   }
   if (role === 'supplier') {
-    if (s === 'PENDING') return jsBtn('Start Loading', 'primary sm', 'lgAction', l.id + ':start', 'Loading started — driver notified');
+    if (s === 'PENDING') return `${jsBtn('Start Loading', 'primary sm', 'lgAction', l.id + ':start', 'Loading started — driver notified')}${zdocPills(l, 'supplier')}`;
     if (s === 'LOADING' && l.weightMode === 'weighbridge') return loadWeighForm(l, 'w1');
     if (s === 'LOADING' && l.weightMode === 'scale') return loadScaleForm(l);
-    if (s === 'WEIGHED_1') return `${jsBtn('Hand Over to Driver', 'primary sm', 'lgAction', l.id + ':depart', 'Truck departed — GPS tracking on')}${call('Driver ' + l.driver)}`;
-    if (s === 'IN_TRANSIT') return `${jsBtn('Track Live', 'primary sm', 'lgAction', l.id + ':arrive', 'Opening live tracking',)}${call('Driver ' + l.driver)}`;
-    if (s === 'OFFLOADING') return call('Driver ' + l.driver);
-    if (s === 'PENDING_PAYMENT') return `${jsBtn('Track Payment', 'ghost sm', 'lgAction', l.id + ':note', 'Payment due ' + l.due)}${call('Driver ' + l.driver)}`;
-    if (s === 'PAID') return `${pill('Payment received · Receipt sent', 'green')}${loadDocs(l)}`;
+    if (s === 'WEIGHED_1') return `${jsBtn('Hand Over to Driver', 'primary sm', 'lgAction', l.id + ':depart', 'Truck departed — GPS tracking on')}${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
+    if (s === 'IN_TRANSIT') return `${jsBtn('Track Live', 'primary sm', 'lgAction', l.id + ':arrive', 'Opening live tracking',)}${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
+    if (s === 'OFFLOADING') return `${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
+    if (s === 'PENDING_PAYMENT') return `${jsBtn('Track Payment', 'ghost sm', 'lgAction', l.id + ':note', 'Payment due ' + l.due)}${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
+    if (s === 'PAID') return `${pill('Payment received · Receipt sent', 'green')}${zdocPills(l, 'supplier')}`;
     return '';
   }
   if (role === 'driver') {
@@ -1750,20 +2735,20 @@ function lgFoot(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admi
     if (s === 'PENDING') return jsBtn('Start Loading', 'primary sm', 'lgAction', l.id + ':start', 'Loading started — GPS tracking on');
     if (s === 'LOADING' && l.weightMode === 'weighbridge') return loadWeighForm(l, 'w1');
     if (s === 'LOADING' && l.weightMode === 'scale') return loadScaleForm(l);
-    if (s === 'WEIGHED_1') return jsBtn('Start Trip', 'primary sm', 'lgAction', l.id + ':depart', 'Departed — ETA calculated');
+    if (s === 'WEIGHED_1') return `${jsBtn('Start Trip', 'primary sm', 'lgAction', l.id + ':depart', 'Departed — ETA calculated')}${zdocPills(l, 'driver')}`;
     if (s === 'IN_TRANSIT') return `${jsBtn('Report Arrival', 'primary sm', 'lgAction', l.id + ':arrive', 'Arrived — offloading')}${jsBtn('Call Dispatch', 'ghost sm', 'lgCall', 'Dispatch|+263 24 277 8800', 'Dialing ZVIDA dispatch…')}`;
     if (s === 'OFFLOADING' && l.weightMode === 'weighbridge') return loadWeighForm(l, 'w2');
-    if (s === 'OFFLOADING') return jsBtn('Offload Complete', 'primary sm', 'lgAction', l.id + ':deliver', 'Offload confirmed — delivery complete');
-    if (s === 'PENDING_PAYMENT') return `${pill('Trip complete · payment pending', 'amber')}${loadDocs(l)}`;
-    if (s === 'PAID') return `${pill('Trip complete · paid', 'green')}${loadDocs(l)}`;
+    if (s === 'OFFLOADING') return `${jsBtn('Offload Complete', 'primary sm', 'lgAction', l.id + ':deliver', 'Offload confirmed — delivery complete')}${zdocPills(l, 'driver')}`;
+    if (s === 'PENDING_PAYMENT') return `${pill('Trip complete · payment pending', 'amber')}${zdocPills(l, 'driver')}`;
+    if (s === 'PAID') return `${pill('Trip complete · paid', 'green')}${zdocPills(l, 'driver')}`;
     return '';
   }
   if (role === 'receiver') {
     if (s === 'IN_TRANSIT') return `${jsBtn('Prepare for Offload', 'ghost sm', 'lgAction', l.id + ':note', 'Intake bay reserved')}${call('Driver ' + l.driver)}`;
     if (s === 'OFFLOADING' && l.weightMode === 'weighbridge') return loadWeighForm(l, 'w2');
     if (s === 'OFFLOADING') return `${jsBtn('Confirm Offload', 'primary sm', 'lgAction', l.id + ':deliver', 'Offload confirmed — delivery complete')}${call('Driver ' + l.driver)}`;
-    if (s === 'PENDING_PAYMENT') return `${jsBtn('Download Invoice', 'ghost sm', 'lgDocs', l.id + ':invoice', 'Invoice downloaded')}${jsBtn('Pay ZVIDA', 'primary sm', 'lgAction', l.id + ':note', 'Payment to ZVIDA queued')}`;
-    if (s === 'PAID') return `${pill('Settled with ZVIDA', 'green')}${loadDocs(l)}`;
+    if (s === 'PENDING_PAYMENT') return `${zdocPills(l, 'receiver')}${jsBtn('Pay ZVIDA', 'primary sm', 'lgAction', l.id + ':note', 'Payment to ZVIDA queued')}`;
+    if (s === 'PAID') return `${pill('Settled with ZVIDA', 'green')}${zdocPills(l, 'receiver')}`;
     return '';
   }
   return '';
@@ -1783,7 +2768,7 @@ export function loadCard(l: Consignment, role: 'supplier' | 'driver' | 'receiver
       <span>${svg(ICON.buy)} Receiver: ${l.receiver}</span>
       <span>${svg(ICON.weighbridge)} ${l.weightMode === 'weighbridge' ? 'Weighbridge' : 'Scale · ' + l.bucketKg + ' kg bucket'}</span>
     </div>`;
-  return `<div class="dsh-lg-card" data-live-card="${l.id}">
+  return `<div class="dsh-lg-card" data-live-card="${l.id}" data-lg-role="${role}">
     <div class="dsh-lg-card-head">
       <span class="dsh-lg-thumb">${img(l.art, 'xs')}</span>
       <div class="dsh-lg-card-title">
@@ -1888,6 +2873,7 @@ export function wireFreight(): void {
         if (!l || l.status !== 'IN_TRANSIT') return;
         l.live = Math.min(l.live + 2 + Math.floor(Math.random() * 3), 98);
         lgSave();
+        void persistLoad(l as unknown as LiveLoad);
         const pctTxt = card.querySelector<HTMLElement>('[data-live-pct-txt]');
         const eta = card.querySelector<HTMLElement>('[data-live-eta]');
         const ping = card.querySelector<HTMLElement>('[data-live-ping]');
@@ -1899,10 +2885,82 @@ export function wireFreight(): void {
   }
 }
 
+/* ---------- Live Supabase hydration ---------- */
+let liveMode = false;
+export function isLiveMode(): boolean {
+  return liveMode;
+}
+
+async function hydrateLive(): Promise<void> {
+  try {
+    const m = mkLoad()!;
+    const f = lgLoad()!;
+    const live = await syncAll({
+      products: m.cat,
+      orders: m.orders,
+      orderSeq: m.seq,
+      loads: f.loads,
+      loadSeq: f.seq,
+    });
+    document.querySelectorAll('[data-offline]').forEach((el) => el.remove());
+    if (!live) return;
+    let changed = false;
+    if (live.products.length) {
+      m.cat = live.products as unknown as MarketProduct[];
+      changed = true;
+    }
+    if (live.orders.length) {
+      m.orders = live.orders as unknown as MarketOrder[];
+      m.seq = live.orderSeq;
+      changed = true;
+    }
+    if (live.loads.length) {
+      f.loads = live.loads as unknown as Consignment[];
+      f.seq = live.loadSeq;
+      changed = true;
+    }
+    if (changed) {
+      liveMode = true;
+      mkSave();
+      lgSave();
+      const badge = document.querySelector('.dsh-live-badge');
+      if (badge) badge.textContent = 'LIVE';
+      refresh();
+    }
+  } catch {
+    const badge = document.querySelector('.dsh-live-badge');
+    if (badge) badge.textContent = 'OFFLINE';
+    const root = document.getElementById('dsh-root');
+    if (root && !root.querySelector('[data-offline]')) {
+      root.insertAdjacentHTML('afterbegin', `<div data-offline>${errorState({
+        title: 'Could not connect to ZVIDA',
+        message: 'Your internet connection dropped, so you are viewing saved demo data. Live orders, loads and market prices will refresh once you are back online.',
+        retry: true,
+      })}</div>`);
+    }
+  }
+}
+
 /* ---------- Boot ---------- */
+/* ---------- Sidebar nav ---------- */
+function navHtml(cfg: RoleCfg): string {
+  const pages = cfg.pages.filter((p) => !p.hidden);
+  const activeId = cfg.pages[0].id;
+  const link = (p: PageCfg) => `<a href="#${p.id}" class="dsh-link ${p.id === activeId ? 'active' : ''}" data-page="${p.id}">${svg(p.icon)}<span>${p.label}</span></a>`;
+  if (!cfg.navGroups) return `<div class="dsh-nav-label">Menu</div>${pages.map(link).join('')}`;
+  let html = '';
+  for (const g of cfg.navGroups) {
+    const members = pages.filter((p) => g.pages.includes(p.id));
+    if (!members.length) continue;
+    html += `<div class="dsh-nav-group"><div class="dsh-nav-label">${g.label}</div>${members.map(link).join('')}</div>`;
+  }
+  return html;
+}
+
 export function boot(cfg: RoleCfg): void {
   wireMarket();
   wireFreight();
+  wireZdoc();
   currentUser = `${cfg.name} (${cfg.roleLabel})`;
   const body = document.body;
   body.innerHTML = `
@@ -1914,11 +2972,7 @@ export function boot(cfg: RoleCfg): void {
         <span class="dsh-brand-text"><span class="dsh-brand-name">ZVIDAMBANO</span><span class="dsh-brand-role">${cfg.roleLabel}</span></span>
       </a>
       <nav class="dsh-nav">
-        <div class="dsh-nav-label">Menu</div>
-        ${cfg.pages
-          .filter((p) => !p.hidden)
-          .map((p, i) => `<a href="#${p.id}" class="dsh-link ${i === 0 ? 'active' : ''}" data-page="${p.id}">${svg(p.icon)}<span>${p.label}</span></a>`)
-          .join('')}
+        ${navHtml(cfg)}
       </nav>
       <div class="dsh-side-foot">
         <button class="dsh-user">
@@ -1937,6 +2991,7 @@ export function boot(cfg: RoleCfg): void {
           <p id="dsh-sub">${cfg.pages[0].sub || cfg.company}</p>
         </div>
         <div class="dsh-search">${svg(ICON.search)}<input placeholder="Search contracts, loads, people…" /></div>
+        <span class="dsh-live-badge" title="Data source">DEMO</span>
         ${cfg.pages.some((p) => p.id === 'cart') ? `<button class="dsh-cartbtn" id="dsh-cart" aria-label="Cart">${svg(ICON.shop)}<span class="dsh-cart-count">${marketQty()}</span></button>` : ''}
         <button class="dsh-bell" id="dsh-bell" aria-label="Notifications">${svg(ICON.bell)}<span class="dsh-bell-count">2</span></button>
         <span class="dsh-top-sep"></span>
@@ -1961,7 +3016,7 @@ export function boot(cfg: RoleCfg): void {
   overlay.addEventListener('click', closeSidebar);
   sidebar.querySelectorAll('.dsh-link').forEach((a) => a.addEventListener('click', closeSidebar));
 
-  (document.getElementById('dsh-logout') as HTMLElement).addEventListener('click', () => (window.location.href = 'login.html'));
+  (document.getElementById('dsh-logout') as HTMLElement).addEventListener('click', () => { void signOutAndRedirect(); });
   (document.getElementById('dsh-bell') as HTMLButtonElement).addEventListener('click', () => toast('You have 2 new notifications', 'info'));
   (document.getElementById('dsh-cart') as HTMLButtonElement)?.addEventListener('click', () => {
     window.location.hash = '#cart';
@@ -1994,7 +3049,11 @@ export function boot(cfg: RoleCfg): void {
   window.addEventListener('hashchange', () => render(window.location.hash.slice(1)));
 
   const initial = window.location.hash.slice(1);
-  render(cfg.pages.some((p) => p.id === initial) ? initial : cfg.pages[0].id);
+  const first = cfg.pages.some((p) => p.id === initial) ? initial : cfg.pages[0].id;
+  root.innerHTML = `${skeleton('card', 2)}<div style="height:14px"></div>${skeleton('row', 4)}`;
+  setTimeout(() => render(first), 320);
+
+  void hydrateLive();
 
   let n = 2;
   setInterval(() => {

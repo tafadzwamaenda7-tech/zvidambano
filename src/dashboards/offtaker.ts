@@ -1,4 +1,4 @@
-import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, bars, ring, img, itemCard, chat, tabs, chips, wf, invoice, steps, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, ledger, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketOrders, marketOrderCard, marketOrderGroup, marketLastOrder, marketSteps, marketRecommend, marketBucket, loadCatalog, loadCard } from './core';
+import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, bars, ring, img, itemCard, chat, tabs, chips, wf, invoice, steps, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, ledger, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketOrders, marketOrderCard, marketOrderGroup, marketLastOrder, marketSteps, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments } from './core';
 import type { PillTone } from './core';
 
 const OFF_LISTINGS: { title: string; thumb: string; badge: string; badgeTone: PillTone; meta: string; foot: string }[] = [];
@@ -310,15 +310,15 @@ const P = {
     label: 'Shop',
     icon: ICON.shop,
     title: 'Shop',
-    sub: 'Marketplace inputs for your mill',
+    sub: 'Inputs supplied by ZVIDA',
     render: () => `
       ${sec('Input Store', marketQty() > 0 ? `Cart (${marketQty()})` : 'Cart', 'Opening cart', undefined, '#cart')}
-      ${field('Search', `<input class="dsh-input dsh-search2" data-mkt-search placeholder="Search inputs, sellers, categories…" />`)}
+      ${field('Search', `<input class="dsh-input dsh-search2" data-mkt-search placeholder="Search inputs, categories…" />`)}
       ${chips(['All', 'Fertilizer', 'Seeds', 'Chemicals', 'Stockfeed', 'Livestock', 'Equipment'], 0, 'shop')}
       <div class="dsh-shop-grid">
         ${marketCatalog().map((p) => marketProductCard(p, 'shop')).join('')}
       </div>
-      <div style="font-size:12px;color:var(--dsh-text-3);margin-top:18px">ZVIDA-verified sellers only. Bulk grain is bought through RFQs on the Buy page.</div>
+      <div style="font-size:12px;color:var(--dsh-text-3);margin-top:18px">Every input is supplied and verified by ZVIDA. Bulk grain is bought through RFQs on the Buy page.</div>
     `,
   },
   cart: {
@@ -326,7 +326,7 @@ const P = {
     label: 'Cart',
     icon: ICON.shop,
     title: 'Cart',
-    sub: 'Marketplace basket',
+    sub: 'Your basket',
     hidden: true,
     render: () => {
       const lines = marketCartLines();
@@ -334,7 +334,7 @@ const P = {
       const total = subtotal + 12;
       return `
       ${kpis([
-        { label: 'Items', value: marketQty(), icon: ICON.shop, delta: 'Verified sellers only', up: true, spark: [1, 2, 2, 3, 2, 3, 3], foot: 'Across the marketplace', open: '#shop' },
+        { label: 'Items', value: marketQty(), icon: ICON.shop, delta: 'Supplied by ZVIDA', up: true, spark: [1, 2, 2, 3, 2, 3, 3], foot: 'Across 3 stores', open: '#shop' },
         { label: 'Subtotal', value: marketMoney(subtotal), icon: ICON.wallet, delta: 'Input costs', up: true, spark: [20, 30, 40, 60, 80, 100, 120], foot: 'Before delivery', open: '#checkout' },
         { label: 'Available Credit', value: '$50,000', icon: ICON.finance, delta: 'Line of credit', up: true, spark: [40, 40, 42, 42, 44, 44, 50], foot: 'Against warehouse receipts', open: '#finance' },
       ])}
@@ -351,7 +351,7 @@ const P = {
               { label: 'Delivery', value: '$12.00' },
               { label: 'Total', value: marketMoney(total) },
             ])}
-            ${banner('ok', 'Delivery to Miller Corp, Harare by <b>Saturday</b>. ZVIDA-backed sellers only.')}
+            ${banner('ok', 'Delivery to Miller Corp, Harare by <b>Saturday</b>. Handled by ZVIDA, start to finish.')}
             <div class="dsh-btn-row full">${btn('Proceed to Checkout', 'primary', 'Opening checkout', '#checkout')}</div>`,
         })}
       `)}
@@ -418,7 +418,7 @@ const P = {
               { label: 'Delivery', value: '$12.00' },
               { label: 'Total', value: marketMoney(marketSubtotal() + 12) },
             ])}
-            <div class="dsh-btn-row full">${jsBtn('Confirm & Place Order', 'primary', 'marketPlace', '', 'Order placed — seller notified')}</div>`,
+            <div class="dsh-btn-row full">${jsBtn('Confirm & Place Order', 'primary', 'marketPlace', '', 'Order placed — ZVIDA is on it')}</div>`,
         })}
       `)}
       </div>
@@ -434,7 +434,7 @@ const P = {
     render: () => {
       const last = marketLastOrder();
       return `
-      ${banner('ok', `${last ? last.ref : 'Your order'} was placed. The sellers have been notified and will confirm shortly.`)}
+      ${banner('ok', `${last ? last.ref : 'Your order'} was placed. ZVIDA has received it and will confirm shortly.`)}
       ${panel({
         title: last ? `Reference ${last.ref}` : 'Reference #C-2213',
         icon: ICON.check,
@@ -466,7 +466,7 @@ const P = {
       const orders = marketOrders().filter((o) => o.buyer.startsWith('Miller'));
       const active = orders.filter((o) => !['DELIVERED', 'CANCELLED', 'ESCALATED'].includes(o.status)).length;
       return `
-      ${banner('info', `${active} active ${active === 1 ? 'order' : 'orders'} in progress. Sellers confirm within 24 hours.`, 'Go shopping', 'Opening the input store', '#shop')}
+      ${banner('info', `${active} active ${active === 1 ? 'order' : 'orders'} in progress. ZVIDA confirms within 24 hours.`, 'Go shopping', 'Opening the input store', '#shop')}
       ${sec('Your Orders', 'Shop more', 'Opening the input store', orders.length, '#shop')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete'], 0, 'orders')}
       ${orders.length === 0 ? panel({ title: 'No orders yet', icon: ICON.orders, body: banner('info', 'When you place an order it will appear here.', 'Browse the shop', 'Opening the input store', '#shop') }) : ''}
@@ -574,6 +574,14 @@ const P = {
       })}
     `;
     },
+  },
+  documents: {
+    id: 'documents',
+    label: 'Documents',
+    icon: ICON.file,
+    title: 'Documents',
+    sub: 'Inbound documents & invoices',
+    render: () => zdocDocuments('receiver', 'Miller'),
   },
   quality: {
     id: 'quality',
@@ -800,5 +808,11 @@ boot({
   accentLight: '#f5f3ff',
   accentRgb: '124, 58, 237',
   gradientEnd: '#a78bfa',
-  pages: [P.today, P.buy, P.shop, P.orders, P.cart, P.checkout, P['order-confirmed'], P.sell, P.deliveries, P.quality, P.finance, P.warehouse, P.perf, P.messages],
+  pages: [P.today, P.buy, P.shop, P.orders, P.cart, P.checkout, P['order-confirmed'], P.sell, P.deliveries, P.documents, P.quality, P.finance, P.warehouse, P.perf, P.messages],
+  navGroups: [
+    { label: 'Overview', pages: ['today', 'buy', 'shop', 'orders'] },
+    { label: 'Supply', pages: ['deliveries', 'quality', 'sell'] },
+    { label: 'Finance', pages: ['finance', 'warehouse'] },
+    { label: 'Account', pages: ['documents', 'perf', 'messages'] },
+  ],
 });

@@ -775,7 +775,7 @@ ON CONFLICT DO NOTHING;
 
 -- Insert seed contracts
 INSERT INTO public.contracts (contract_number, farmer_id, offtaker_id, broker_id, commodity_id, quantity, unit, farmer_price, offtaker_price, broker_commission, status)
-SELECT v.contract_number, f.id, o.id, b.id, c.id, v.quantity, v.unit, v.farmer_price, v.offtaker_price, v.broker_commission, v.status
+SELECT v.cn, f.id, o.id, b.id, c.id, v.quantity, v.unit, v.farmer_price, v.offtaker_price, v.broker_commission, v.status
 FROM (VALUES
   ('ZV-001', 'farmer1@zvida.zw', 'offtaker1@zvida.zw', 'broker1@zvida.zw', 'Wheat', 5000, 'kg', 420, 450, 30, 'SUCCESSFUL'),
   ('ZV-002', 'farmer2@zvida.zw', 'offtaker1@zvida.zw', 'broker1@zvida.zw', 'Soybeans', 3000, 'kg', 550, 580, 30, 'IN_TRANSIT'),

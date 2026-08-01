@@ -1,4 +1,4 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments } from './core';
 
 JS.callDriver = (who) => {
   toast(`Dialing ${who} — placing the call from your phone`, 'info');
@@ -52,15 +52,15 @@ wf('z-resolve-882', {
   },
 });
 wf('z-list-james', {
-  approve: { to: 'APPROVED', tone: 'green', nav: '#listings', toast: 'Listing approved — James notified', foot: pill('Live on marketplace', 'green') },
+  approve: { to: 'APPROVED', tone: 'green', nav: '#listings', toast: 'Listing approved — James notified', foot: pill('Live for customers', 'green') },
   reject: { to: 'REJECTED', tone: 'red', nav: '#listings', toast: 'Listing rejected — James notified', foot: pill('Rejected', 'red') },
 });
 wf('z-list-sarah', {
-  approve: { to: 'APPROVED', tone: 'green', nav: '#listings', toast: 'Listing approved — Sarah notified', foot: pill('Live on marketplace', 'green') },
+  approve: { to: 'APPROVED', tone: 'green', nav: '#listings', toast: 'Listing approved — Sarah notified', foot: pill('Live for customers', 'green') },
   reject: { to: 'REJECTED', tone: 'red', nav: '#listings', toast: 'Listing rejected — Sarah notified', foot: pill('Rejected', 'red') },
 });
 wf('z-list-peter', {
-  approve: { to: 'APPROVED', tone: 'green', nav: '#listings', toast: 'Listing approved — Peter notified', foot: pill('Live on marketplace', 'green') },
+  approve: { to: 'APPROVED', tone: 'green', nav: '#listings', toast: 'Listing approved — Peter notified', foot: pill('Live for customers', 'green') },
   reject: { to: 'REJECTED', tone: 'red', nav: '#listings', toast: 'Listing rejected — Peter notified', foot: pill('Rejected', 'red') },
 });
 wf('z-automatch', { match: { done: 'Matched', nav: '#deliveries', toast: 'Contract created — parties notified' } });
@@ -105,7 +105,7 @@ const P = {
         { label: 'Notify All', icon: ICON.send, toast: 'Broadcast sent to all parties', wf: 'z-notify', action: 'send' },
       ])}
       ${kpis([
-        { label: 'Today’s Spread', value: '$4,200', icon: ICON.spark, delta: '12 loads in motion', up: true, spark: [10, 18, 16, 22, 30, 34, 42], foot: 'Brokerage for the day', open: '#reports' },
+        { label: 'Today’s Spread', value: '$4,200', icon: ICON.spark, delta: '12 loads in motion', up: true, spark: [10, 18, 16, 22, 30, 34, 42], foot: 'Gross margin for the day', open: '#reports' },
         { label: 'This Week', value: '$18,500', icon: ICON.trendingUp, delta: '8% vs last week', up: true, spark: [30, 34, 32, 40, 44, 42, 48], foot: 'Across all load types', open: '#payments' },
         { label: 'Pending Approvals', value: 4, icon: ICON.listings, delta: '2 disputes open', up: false, spark: [5, 6, 4, 7, 5, 4, 4], foot: 'Listings & contracts', open: '#listings' },
         { label: 'On-time Deliveries', value: 96, icon: ICON.shield, delta: 'Across 38 loads', up: true, spark: [90, 92, 94, 93, 95, 96, 96], foot: '% of loads', open: '#deliveries' },
@@ -338,6 +338,14 @@ const P = {
     `;
     },
   },
+  documents: {
+    id: 'documents',
+    label: 'Documents',
+    icon: ICON.file,
+    title: 'Contract Documents',
+    sub: 'All parties · both price points',
+    render: () => zdocDocuments('admin'),
+  },
   disputes: {
     id: 'disputes',
     label: 'Disputes',
@@ -490,10 +498,10 @@ const P = {
   },
   marketplace: {
     id: 'marketplace',
-    label: 'Marketplace',
+    label: 'Orders',
     icon: ICON.shop,
-    title: 'Marketplace',
-    sub: 'E-commerce order oversight',
+    title: 'Orders',
+    sub: 'Order oversight',
     render: () => {
       const orders = marketOrders();
       const open = orders.filter((o) => !['DELIVERED', 'PAID', 'CANCELLED', 'ESCALATED'].includes(o.status)).length;
@@ -501,11 +509,11 @@ const P = {
       const esc = orders.filter((o) => o.status === 'ESCALATED').length;
       return `
       ${kpis([
-        { label: 'Open Orders', value: open, icon: ICON.orders, delta: 'Awaiting fulfilment', up: true, spark: [2, 3, 4, 3, 5, 4, Math.max(open, 2)], foot: 'Across the marketplace', open: '#marketplace' },
-        { label: 'GMV (Delivered)', value: marketMoney(gmv), icon: ICON.trendingUp, delta: 'Completed orders', up: true, spark: [40, 60, 90, 80, 120, 140, Math.max(gmv / 10, 10)], foot: 'Sellers paid via NET_7', open: '#marketplace' },
+        { label: 'Open Orders', value: open, icon: ICON.orders, delta: 'Awaiting fulfilment', up: true, spark: [2, 3, 4, 3, 5, 4, Math.max(open, 2)], foot: 'Across all orders', open: '#marketplace' },
+        { label: 'GMV (Delivered)', value: marketMoney(gmv), icon: ICON.trendingUp, delta: 'Completed orders', up: true, spark: [40, 60, 90, 80, 120, 140, Math.max(gmv / 10, 10)], foot: 'Suppliers paid via NET_7', open: '#marketplace' },
         { label: 'Escalated', value: esc, icon: ICON.alert, delta: 'Needs resolution', up: false, spark: [1, 0, 1, 0, 1, 0, Math.max(esc, 1)], foot: 'Resolution desk', open: '#disputes' },
       ])}
-      ${banner('info', 'Monitor farmer orders end-to-end: seller confirms, driver delivers, payment releases. Escalate when buyers and sellers disagree.')}
+      ${banner('info', 'Monitor orders end-to-end: ZVIDA confirms, driver delivers, payment releases. Escalate when a customer disputes a transaction.')}
       ${sec('Order Board', 'Review disputes', 'Opening resolution desk', orders.length, '#disputes')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete', 'Escalated'], 0, 'zmkt')}
       ${orders.map((o) => marketOrderGroup(o, 'admin', 'zmkt', marketBucket(o.status))).join('')}
@@ -577,7 +585,7 @@ boot({
   key: 'zvida',
   name: 'Admin',
   roleLabel: 'ZVIDA',
-  company: 'ZVIDA Brokerage',
+  company: 'ZVIDAMBANO Traders',
   initials: 'Z',
   logoText: 'ZVIDAMBANO · ZVIDA',
   accent: '#2563eb',
@@ -585,5 +593,11 @@ boot({
   accentLight: '#eff6ff',
   accentRgb: '37, 99, 235',
   gradientEnd: '#60a5fa',
-  pages: [P.control, P.marketplace, P.listings, P.matches, P.deliveries, P.disputes, P.payments, P.reports],
+  pages: [P.control, P.marketplace, P.listings, P.matches, P.deliveries, P.documents, P.disputes, P.payments, P.reports],
+  navGroups: [
+    { label: 'Overview', pages: ['control'] },
+    { label: 'Trading', pages: ['listings', 'matches', 'payments'] },
+    { label: 'Operations', pages: ['deliveries', 'marketplace', 'documents', 'disputes'] },
+    { label: 'Analytics', pages: ['reports'] },
+  ],
 });

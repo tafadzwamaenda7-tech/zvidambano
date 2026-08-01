@@ -4,6 +4,8 @@ import { initDesignSystem, FormValidator } from './ui-utils';
 import ZvidaSearch from './search';
 import { registerServiceWorker, onOnlineStatusChange } from './lib/pwa';
 import { initializeAuth, onAuthChange } from './lib/auth';
+import { initAuthUI } from './lib/auth-ui';
+import { canAccessDashboard, type UserRole } from './lib/auth-utils';
 import { initializeRealtimeSubscriptions } from './lib/realtime';
 import { stateManager } from './lib/state-manager';
 
@@ -365,6 +367,12 @@ function init(): void {
   const unsubscribe = onAuthChange((session: any) => {
     if (session) {
       console.log('[Auth] User logged in:', session.user?.email);
+      // Magic-link callback or a returning session on the login page: bounce to the dashboard.
+      if (window.location.pathname.endsWith('login.html')) {
+        const role: string | null = session.user?.user_metadata?.role ?? null;
+        const dest = canAccessDashboard(role as UserRole);
+        if (dest) window.location.href = dest;
+      }
     } else {
       console.log('[Auth] User logged out');
     }
@@ -382,6 +390,7 @@ function init(): void {
   initContactForm();
   initDesignSystem();
   initSearchBars();
+  initAuthUI();
 }
 
 document.addEventListener('DOMContentLoaded', init);

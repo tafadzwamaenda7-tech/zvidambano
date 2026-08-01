@@ -1,4 +1,4 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, img, itemCard, profile, wf, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, chips, marketCatalog, marketAddProduct, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, img, itemCard, profile, wf, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, chips, miniBar, marketCatalog, marketAddProduct, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, zdocDocuments } from './core';
 import type { PillTone, MarketProduct } from './core';
 
 const VENDOR = 'Vendor Supplies Ltd';
@@ -6,7 +6,7 @@ const VENDOR = 'Vendor Supplies Ltd';
 let PROD_EDIT: null | { oldName: string; name: string; price: string; unit: string } = null;
 
 JS.callBuyer = () => {
-  toast('Dialing ZVIDA buyer desk — placing the call from your phone', 'info');
+  toast('Dialing ZVIDA — placing the call from your phone', 'info');
 };
 JS.editProduct = (_p, el) => {
   const row = el.closest<HTMLTableRowElement>('tr');
@@ -56,7 +56,7 @@ JS.submitProduct = () => {
   const stock = parseInt(ins[3]?.value || '0', 10) || 0;
   const p: MarketProduct = { id: 'v' + Date.now(), name, category, price, unit, seller: VENDOR, stock, rating: 4.5, reviews: 0, thumb: 'fert' };
   marketAddProduct(p);
-  toast('Product listed on the marketplace');
+  toast('Product listed for sale');
   window.location.hash = '#today';
   window.location.hash = '#listings';
 };
@@ -81,7 +81,7 @@ registerDownload('v-stmt', 'Vendor_Statement_Jul2026.csv', [
 ].join('\n'), 'text/csv');
 
 wf('v-list', {
-  submit: { done: 'Submitted', toast: 'Product listed on the marketplace' },
+  submit: { done: 'Submitted', toast: 'Product listed for sale' },
 });
 wf('v-stock', {
   add: { done: 'Added', toast: 'Product form opened' },
@@ -124,14 +124,14 @@ const P = {
         { label: 'Payouts', icon: ICON.wallet, toast: 'Opening payouts', href: '#finance' },
       ])}
       ${kpis([
-        { label: 'Open Orders', value: open.length, icon: ICON.orders, delta: `${newCount} need action`, up: false, spark: [1, 2, 3, 2, 4, 3, 4], foot: 'Across the marketplace', open: '#orders' },
+        { label: 'Open Orders', value: open.length, icon: ICON.orders, delta: `${newCount} need action`, up: false, spark: [1, 2, 3, 2, 4, 3, 4], foot: 'Across your store', open: '#orders' },
         { label: 'Month Sales', value: '$8,900', icon: ICON.trendingUp, delta: '+9% this month', up: true, spark: [20, 26, 24, 30, 36, 40, 44], foot: 'Gross revenue', open: '#finance' },
         { label: 'Pending Payouts', value: '$2,400', icon: ICON.wallet, delta: '3 payouts queued', up: false, spark: [12, 14, 18, 16, 20, 22, 24], foot: 'NET_7 terms', open: '#finance' },
         { label: 'Fulfilment Rate', value: 98, icon: ICON.shield, delta: 'Across 300 orders', up: true, spark: [90, 93, 95, 94, 96, 97, 98], foot: '% of orders', open: '#orders' },
       ])}
       ${split(`
         ${sec('Orders to Fulfil', 'View all', 'Opening order pipeline', undefined, '#orders')}
-        ${open.length === 0 ? banner('ok', 'No open orders right now. New marketplace orders will appear here.') : open.slice(0, 3).map((o) => marketOrderCard(o, 'seller')).join('')}
+        ${open.length === 0 ? banner('ok', 'No open orders right now. New orders from ZVIDA customers will appear here.') : open.slice(0, 3).map((o) => marketOrderCard(o, 'seller')).join('')}
       `, `
         ${sec('Low Stock Alerts')}
         ${banner('warn', '7 items below reorder level. Restock advised this week.', 'View stock', 'Opening inventory', '#inventory')}
@@ -144,10 +144,10 @@ const P = {
           flush: true,
         })}
         ${panel({
-          title: 'Marketplace Today',
+          title: 'Today at a Glance',
           icon: ICON.trendingUp,
           body: `${listRow(ICON.orders, 'Orders placed', `${mine.length} all-time · ${newCount} new`, String(newCount), 'plain', true)}
-            ${listRow(ICON.wallet, 'Revenue (delivered)', 'Confirmed marketplace orders', marketMoney(mine.filter((o) => o.status === 'DELIVERED').reduce((s, o) => s + o.total, 0)), 'pos')}`,
+            ${listRow(ICON.wallet, 'Revenue (delivered)', 'Confirmed orders', marketMoney(mine.filter((o) => o.status === 'DELIVERED').reduce((s, o) => s + o.total, 0)), 'pos')}`,
         })}
       `)}`;
     },
@@ -167,12 +167,12 @@ const P = {
       ])}
       ${sec('Stock Levels')}
       ${panel({
-        body: table(['', 'Product', 'Stock', 'Unit', 'Status'], [
-          [img('fert', 'xs'), 'NPK Fertilizer', '12', 'bags', pill('Low', 'amber')],
-          [img('seed', 'xs'), 'SC403 Maize Seed', '48', 'kg', pill('Ok', 'green')],
-          [img('chem', 'xs'), 'Roundup Herbicide', '5', 'L', pill('Low', 'amber')],
-          [img('feed', 'xs'), 'Poultry Mash Feed', '60', 'bags', pill('Ok', 'green')],
-          [img('chicks', 'xs'), 'Day-old Chicks', '0', 'units', pill('Out of stock', 'red')],
+        body: table(['', 'Product', 'Stock', 'Unit', 'Level', 'Status'], [
+          [img('fert', 'xs'), 'NPK Fertilizer', '12', 'bags', miniBar(60, 'warn'), pill('Low', 'amber')],
+          [img('seed', 'xs'), 'SC403 Maize Seed', '48', 'kg', miniBar(100, 'ok'), pill('Ok', 'green')],
+          [img('chem', 'xs'), 'Roundup Herbicide', '5', 'L', miniBar(33, 'warn'), pill('Low', 'amber')],
+          [img('feed', 'xs'), 'Poultry Mash Feed', '60', 'bags', miniBar(100, 'ok'), pill('Ok', 'green')],
+          [img('chicks', 'xs'), 'Day-old Chicks', '0', 'units', miniBar(0, 'danger'), pill('Out of stock', 'red')],
         ], [], ['#listings', '#listings', '#listings', '#listings', '#listings']),
         flush: true,
       })}
@@ -210,7 +210,7 @@ const P = {
               <div style="margin-top:10px">${uploadBtn('Upload image', 'ghost sm', 'image/*')}</div>
             </div>
             ${PROD_EDIT ? banner('ok', `Editing <b>${PROD_EDIT.name}</b> — update and save.`) : ''}
-            <div class="dsh-btn-row">${PROD_EDIT ? jsBtn('Cancel', 'ghost', 'cancelProdEdit', 'listings', 'Edit cancelled') : ''}${jsBtn(PROD_EDIT ? 'Save Changes' : 'Submit Listing', 'primary', 'submitProduct', '', PROD_EDIT ? 'Product updated' : 'Product listed on the marketplace')}</div>`,
+            <div class="dsh-btn-row">${PROD_EDIT ? jsBtn('Cancel', 'ghost', 'cancelProdEdit', 'listings', 'Edit cancelled') : ''}${jsBtn(PROD_EDIT ? 'Save Changes' : 'Submit Listing', 'primary', 'submitProduct', '', PROD_EDIT ? 'Product updated' : 'Product listed for sale')}</div>`,
         })}
       `, `
         ${sec('Active Listings')}
@@ -234,16 +234,16 @@ const P = {
     label: 'Orders',
     icon: ICON.orders,
     title: 'Orders',
-    sub: 'Marketplace order pipeline',
+    sub: 'Order pipeline',
     render: () => {
       const mine = marketOrders(VENDOR);
       const newCount = mine.filter((o) => o.status === 'NEW').length;
       return `
-      ${banner('info', `${newCount} new marketplace orders awaiting your confirmation.`, 'Fulfil now', 'Showing new orders', '#orders')}
+      ${banner('info', `${newCount} new orders awaiting your confirmation.`, 'Fulfil now', 'Showing new orders', '#orders')}
       ${sec('Order Pipeline', 'Manage listings', 'Opening your inventory', mine.length, '#inventory')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete'], 0, 'vord')}
       ${mine.map((o) => marketOrderGroup(o, 'seller', 'vord', marketBucket(o.status))).join('')}
-      ${mine.length === 0 ? banner('ok', 'No orders yet. Farmers see your listings live on the marketplace.') : ''}
+      ${mine.length === 0 ? banner('ok', 'No orders yet. ZVIDA will send you orders as customers buy your products.') : ''}
     `;
     },
   },
@@ -349,6 +349,14 @@ const P = {
       `)}
     `,
   },
+  documents: {
+    id: 'documents',
+    label: 'Documents',
+    icon: ICON.file,
+    title: 'Documents',
+    sub: 'Purchase orders, delivery notes & receipts',
+    render: () => zdocDocuments('supplier', VENDOR),
+  },
 };
 
 boot({
@@ -363,5 +371,11 @@ boot({
   accentLight: '#f0fdfa',
   accentRgb: '13, 148, 136',
   gradientEnd: '#2dd4bf',
-  pages: [P.today, P.inventory, P.listings, P.orders, P.dispatch, P.finance, P.settings],
+  pages: [P.today, P.inventory, P.listings, P.orders, P.dispatch, P.documents, P.finance, P.settings],
+  navGroups: [
+    { label: 'Overview', pages: ['today'] },
+    { label: 'Store', pages: ['inventory', 'listings', 'orders'] },
+    { label: 'Logistics', pages: ['dispatch', 'documents'] },
+    { label: 'Finance & Account', pages: ['finance', 'settings'] },
+  ],
 });

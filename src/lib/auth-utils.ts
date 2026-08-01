@@ -4,7 +4,7 @@
 
 import { supabase } from './supabase';
 
-export type UserRole = 'farmer' | 'broker' | 'offtaker' | 'driver' | 'supplier' | 'admin' | 'compliance';
+export type UserRole = 'farmer' | 'broker' | 'offtaker' | 'driver' | 'supplier' | 'admin' | 'compliance' | 'support';
 
 // Auto-refresh session every 5 minutes
 export function setupAutoRefresh() {
@@ -33,6 +33,7 @@ export function canAccessDashboard(userRole: UserRole): string | null {
     supplier: '/vendor-dashboard.html',
     admin: '/zvida-dashboard.html',
     compliance: '/zvida-dashboard.html',
+    support: '/support-dashboard.html',
   };
   return dashboardMap[userRole] || null;
 }
