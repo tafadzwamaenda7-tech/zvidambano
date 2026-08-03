@@ -785,6 +785,43 @@ export function textarea(rows = 3, placeholder?: string, o: { counter?: string; 
   return `<textarea class="dsh-textarea" rows="${rows}"${counter}${val} placeholder="${placeholder || ''}"></textarea>`;
 }
 
+/* ---------- Weighbridge stations ---------- */
+export interface WeighbridgeStation {
+  id: string;
+  town: string;
+  station: string;
+  distanceKm: number;
+  lanes: number;
+  hours: string;
+}
+
+/* Certified ZVIDA weighbridges a farmer/offtaker can nominate on a listing.
+   Distances are road estimates from central Harare. */
+export const WEIGHBRIDGES: WeighbridgeStation[] = [
+  { id: 'harare', town: 'Harare', station: 'GMB Grain Silo', distanceKm: 5, lanes: 3, hours: '24/7' },
+  { id: 'ruwa', town: 'Ruwa', station: 'Ruwa Depot', distanceKm: 24, lanes: 2, hours: '06:00–18:00' },
+  { id: 'marondera', town: 'Marondera', station: 'Marondera Grain Depot', distanceKm: 72, lanes: 2, hours: '07:00–18:00' },
+  { id: 'concession', town: 'Concession', station: 'Concession Depot', distanceKm: 70, lanes: 2, hours: '06:00–20:00' },
+  { id: 'glendale', town: 'Glendale', station: 'Glendale Scale', distanceKm: 57, lanes: 2, hours: '06:00–18:00' },
+  { id: 'bindura', town: 'Bindura', station: 'Bindura Depot', distanceKm: 88, lanes: 2, hours: '07:00–17:00' },
+];
+
+export function weighbridgeByTown(town: string): WeighbridgeStation | undefined {
+  return WEIGHBRIDGES.find((w) => w.town.toLowerCase() === (town || '').toLowerCase());
+}
+
+/** A delivery-point select populated with nearby certified weighbridges.
+    Option values are the town names (Harare, Ruwa, Marondera, Concession,
+    Glendale, Bindura). */
+export function weighbridgeSelect(val: string, o: { ph?: boolean; sel?: string } = {}): string {
+  const ph = o.ph ? `<option value="" disabled hidden ${o.sel ? '' : 'selected'}>Choose your nearest weighbridge…</option>` : '';
+  const opts = WEIGHBRIDGES.map((w) => {
+    const sel = w.town === o.sel ? ' selected' : '';
+    return `<option value="${w.town}"${sel}>${w.station} · ${w.town} — ${w.distanceKm} km</option>`;
+  }).join('');
+  return `<select class="dsh-select" data-val="${val}">${ph}${opts}</select>`;
+}
+
 /* ---------- Chat ---------- */
 export function chat(thread: { name: string; preview: string; time: string }, messages: { sent: boolean; text: string; time?: string }[], quick?: string[]): string {
   const convs = quick
@@ -822,6 +859,76 @@ export function docs(items: { name: string; meta: string; icon?: string; dl?: st
 /* ---------- Profile ---------- */
 export function profile(items: { k: string; v: string }[]): string {
   return `<div class="dsh-profile">${items.map((i) => `<div><span class="k">${i.k}</span><span class="v">${i.v}</span></div>`).join('')}</div>`;
+}
+
+/* ---------- Account header (professional settings-page hero) ---------- */
+export function accountHeader(o: {
+  initials: string;
+  name: string;
+  role: string;
+  email: string;
+  meta: string;
+  verified?: boolean;
+  live?: boolean;
+  stats?: { label: string; value: string }[];
+}): string {
+  const ver = o.verified ? pill('Verified', 'green') : pill('Pending verification', 'amber');
+  const mode = o.live ? pill('LIVE', 'blue') : pill('DEMO', 'gray');
+  const stats = o.stats?.length
+    ? `<div style="display:flex;gap:28px;flex-wrap:wrap;margin-top:18px;padding-top:14px;border-top:1px solid var(--dsh-border)">
+        ${o.stats.map((s) => `<div style="min-width:92px"><div style="font-size:17px;font-weight:750;letter-spacing:-0.01em">${s.value}</div><div style="font-size:11px;color:var(--dsh-text-3);text-transform:uppercase;letter-spacing:.05em;margin-top:2px">${s.label}</div></div>`).join('')}
+      </div>`
+    : '';
+  return `<div class="dsh-panel"><div class="dsh-panel-body" style="padding:22px 24px">
+    <div style="display:flex;align-items:center;gap:18px;flex-wrap:wrap">
+      <span class="dsh-avatar" style="width:64px;height:64px;font-size:24px;background:linear-gradient(135deg,var(--ac),var(--ac-deep));color:#fff">${o.initials}</span>
+      <div style="flex:1;min-width:200px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:17px;font-weight:750;letter-spacing:-0.01em">${o.name}</span>
+          ${ver}${mode}
+        </div>
+        <div style="font-size:13px;color:var(--dsh-text-2);margin-top:3px">${o.role}</div>
+        <div style="font-size:12.5px;color:var(--dsh-text-3);margin-top:2px">${o.email} · ${o.meta}</div>
+      </div>
+    </div>
+    ${stats}
+  </div></div>`;
+}
+
+/* ---------- Preferences (language / currency / alert toggles) ---------- */
+export function prefsPanel(o: {
+  p: string;
+  submit: string;
+  lang?: string;
+  cur?: string;
+  email?: boolean;
+  sms?: boolean;
+}): string {
+  const langOpts = ['English', 'Shona', 'Ndebele'];
+  const curOpts = ['USD ($)', 'ZiG (ZWL)', 'ZAR (R)'];
+  const langSel = select(langOpts, Math.max(0, langOpts.indexOf(o.lang || 'English')), { val: o.p + 'Lang' });
+  const curSel = select(curOpts, Math.max(0, curOpts.indexOf(o.cur || 'USD ($)')), { val: o.p + 'Cur' });
+  const radio = (name: string, on: boolean) =>
+    `<div class="dsh-radio-row">
+      <label class="dsh-radio"><input type="radio" name="${name}" data-val="${name}" value="on"${on ? ' checked' : ''} /> On</label>
+      <label class="dsh-radio"><input type="radio" name="${name}" data-val="${name}" value="off"${on ? '' : ' checked'} /> Off</label>
+    </div>`;
+  return `${sec('Preferences')}
+  ${panel({
+    title: 'Language, currency & alerts',
+    body: `
+      <div data-form>
+      <div class="dsh-field-grid">
+        ${field('Language', langSel)}
+        ${field('Display currency', curSel)}
+      </div>
+      <div class="dsh-field-grid">
+        ${field('Email notifications', radio(o.p + 'NEmail', o.email !== false))}
+        ${field('SMS alerts', radio(o.p + 'NSms', o.sms !== false))}
+      </div>
+      <div class="dsh-btn-row">${submitBtn('Save Preferences', 'primary', o.submit)}</div>
+      </div>`,
+  })}`;
 }
 
 /* ---------- Item card ---------- */
@@ -2405,6 +2512,14 @@ export function wireForms(root: HTMLElement): void {
     if (t.dataset.val) {
       const spec = FORM_RULES[t.dataset.val];
       if (spec) checkField(t, spec, t.dataset.touched === '1');
+      if (t.tagName === 'SELECT') {
+        const note = form.querySelector<HTMLElement>(`[data-wb-note="${t.dataset.val}"]`);
+        if (note) {
+          const w = weighbridgeByTown((t as HTMLSelectElement).value);
+          note.textContent = w ? `${w.station}, ${w.town} · ${w.lanes} lanes · ${w.hours} · ${w.distanceKm} km from Harare` : '';
+          note.style.display = w ? '' : 'none';
+        }
+      }
     }
     if (t.type === 'password' && t === form.querySelector<HTMLInputElement>('input[type="password"]')) {
       const box = form.querySelector<HTMLElement>('[data-pw-check]');

@@ -1,11 +1,16 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments, emptyState, formRules, FORM_RULES, checkField, refresh } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments, emptyState, formRules, FORM_RULES, checkField, refresh, profile, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, accountHeader, prefsPanel } from './core';
 import { resolveDashboardSession } from '../lib/session';
 import { liveConfigured, getLiveAccount } from '../lib/zvida-live';
 import { supabase } from '../lib/supabase';
 import { invokeCreateContract } from '../lib/backend';
+import { loadSettings, saveSettings, saveProfile, changePassword, formValue, radioValue } from '../lib/settings';
 
 formRules({
   zPrice: { req: true, num: { min: 0.01, max: 100000 }, msg: 'Enter a ZVIDA price above $0.' },
+  zName: { req: true, min: 2, max: 80, msg: 'Enter your full name.' },
+  zPhone: { min: 7, max: 40, msg: 'Enter a valid phone number.' },
+  zvPw: { req: true, min: 8, max: 72, msg: 'Use at least 8 characters.' },
+  zvPw2: { req: true, msg: 'Re-enter your new password.' },
 });
 
 JS.approveListing = (key: string, el: HTMLElement) => {
@@ -598,7 +603,139 @@ const P = {
     `;
     },
   },
+  settings: {
+    id: 'settings',
+    label: 'Settings',
+    icon: ICON.settings,
+    title: 'Settings',
+    sub: 'Profile, account & security',
+    render: () => {
+      const live = isLiveMode();
+      const name = live ? (liveUserName() || 'ZVIDA Admin') : 'Platform Admin';
+      const email = live ? 'On file with ZVIDA' : 'ops@zvidambano.co.zw';
+      const initials = name.split(' ').map((p) => p.charAt(0)).join('').slice(0, 2).toUpperCase() || 'Z';
+      return `
+      ${accountHeader({
+        initials,
+        name,
+        role: 'Platform Administrator · ZVIDAMBANO Traders',
+        email,
+        meta: live ? 'Account on file with ZVIDA' : 'Member since 2021',
+        verified: true,
+        live,
+        stats: live ? [] : [
+          { label: 'Platform role', value: 'Admin' },
+          { label: 'Traders on network', value: '1,240' },
+          { label: 'Weighbridge stations', value: '6' },
+        ],
+      })}
+      ${split(`
+        ${sec('Profile')}
+        ${panel({
+          title: 'Personal',
+          icon: ICON.users,
+          body: `
+            <div data-form>
+            ${profile([{ k: 'Email', v: email }, { k: 'Role', v: `${pill('Administrator', 'green')}` }])}
+            <div data-async="zvida-profile-fill">
+              ${field('Full name', input(name, undefined, { val: 'zName' }))}
+              ${field('Phone', input('', 'e.g. +263 24 277 8800', { val: 'zPhone' }))}
+            </div>
+            <div class="dsh-btn-row">${submitBtn('Save Profile', 'primary', 'zv-profile')}</div>
+            </div>`,
+        })}
+        ${sec('Platform')}
+        ${panel({
+          title: 'ZVIDAMBANO Traders',
+          icon: ICON.dashboard,
+          body: live
+            ? banner('info', 'Platform operator details are managed by ZVIDA HQ. Contact support to update them.')
+            : profile([
+                { k: 'Company', v: 'ZVIDAMBANO Traders (Pvt) Ltd' },
+                { k: 'Registration', v: 'ZC/2021/0042' },
+                { k: 'Support', v: 'ops@zvidambano.co.zw' },
+              ]),
+        })}
+        <div data-async="zvida-prefs-fill"></div>
+      `, `
+        ${sec('Security')}
+        ${panel({
+          title: 'Change password',
+          icon: ICON.shield,
+          body: `
+            <div data-form>
+            ${field('New password', input(undefined, 'Min 8 characters', { val: 'zvPw', type: 'password' }))}
+            ${pwCheck()}
+            ${field('Confirm new password', input(undefined, 'Repeat your new password', { val: 'zvPw2', type: 'password' }))}
+            <div class="dsh-btn-row">${submitBtn('Update Password', 'primary', 'zv-security')}</div>
+            ${disclose({
+              title: 'Password rules',
+              summary: 'Why we ask for a strong password',
+              body: 'ZVIDA protects settlement data and platform credentials. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps the platform safe.',
+            })}
+            </div>`,
+        })}
+        ${panel({
+          title: 'Documents',
+          icon: ICON.file,
+          body: live
+            ? banner('info', 'Operator credentials and compliance documents are managed by ZVIDA HQ.')
+            : `${listRow(ICON.file, 'Company registration', 'ZC/2021/0042', btn('View', 'ghost sm', 'Document preview is for demo accounts', '#documents'), 'plain')}
+            ${listRow(ICON.shield, 'Trading compliance', 'Renews Jun 2027', btn('View', 'ghost sm', 'Document preview is for demo accounts', '#documents'), 'plain')}`,
+        })}
+      `)}
+    `;
+    },
+  },
 };
+
+asyncFills['zvida-profile-fill'] = async () => {
+  const s = await loadSettings();
+  const nm = s.name || (isLiveMode() ? liveUserName() : 'Platform Admin');
+  const ph = s.phone || (isLiveMode() ? '' : '+263 24 277 8800');
+  return `${field('Full name', input(nm, undefined, { val: 'zName' }))}
+    ${field('Phone', input(ph, 'e.g. +263 24 277 8800', { val: 'zPhone' }))}`;
+};
+
+asyncFills['zvida-prefs-fill'] = async () => {
+  const s = await loadSettings();
+  return prefsPanel({ p: 'z', submit: 'zv-prefs', lang: s.language, cur: s.currency, email: s.notifyEmail !== 'off', sms: s.notifySms !== 'off' });
+};
+
+onValidSubmit('zv-profile', (form) => {
+  void saveProfile({ name: formValue(form, 'zName'), phone: formValue(form, 'zPhone') }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Profile updated');
+    else toast(r.error || 'Could not save profile', 'error');
+  });
+});
+
+onValidSubmit('zv-prefs', (form) => {
+  void saveSettings({
+    language: formValue(form, 'zLang'),
+    currency: formValue(form, 'zCur'),
+    notifyEmail: radioValue(form, 'zNEmail'),
+    notifySms: radioValue(form, 'zNSms'),
+  }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Preferences saved');
+    else toast(r.error || 'Could not save preferences', 'error');
+  });
+});
+
+onValidSubmit('zv-security', (form) => {
+  const pws = [...form.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+  if (pws[1] && pws[1].value !== pws[0]?.value) {
+    toast('Passwords do not match', 'error');
+    restoreSubmit(form);
+    return;
+  }
+  void changePassword(pws[0]?.value || '').then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Password updated — use it to sign in next time');
+    else toast(r.error || 'Could not update password', 'error');
+  });
+});
 
 function pendingListing(supplier: string, art: string, commodity: string, qty: number, loc: string, grade: string, moisture: number, reserve: number, spoilage: number, spoilageNote: string, suggested: number, key: string): string {
   const ageTone = spoilage === 0 ? 'green' : spoilage > 30 ? 'red' : 'amber';
@@ -674,13 +811,14 @@ boot({
   accentLight: '#eff6ff',
   accentRgb: '37, 99, 235',
   gradientEnd: '#60a5fa',
-  pages: [P.control, P.marketplace, P.listings, P.matches, P.deliveries, P.documents, P.disputes, P.payments, P.reports],
-  keepEmpty: ['marketplace'],
+  pages: [P.control, P.marketplace, P.listings, P.matches, P.deliveries, P.documents, P.disputes, P.payments, P.reports, P.settings],
+  keepEmpty: ['marketplace', 'settings'],
   navGroups: [
     { label: 'Overview', pages: ['control'] },
     { label: 'Trading', pages: ['listings', 'matches', 'payments'] },
     { label: 'Operations', pages: ['deliveries', 'marketplace', 'documents', 'disputes'] },
     { label: 'Analytics', pages: ['reports'] },
+    { label: 'Account', pages: ['settings'] },
   ],
   session,
 });

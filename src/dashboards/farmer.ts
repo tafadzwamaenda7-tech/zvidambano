@@ -1,4 +1,5 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketMyOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, liveUserId, marketAddProduct, marketRemoveProduct, asyncFills, submitBtn, onValidSubmit, formRules, takePendingUpload } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, pwCheck, disclose, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketMyOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, liveUserId, marketAddProduct, marketRemoveProduct, asyncFills, submitBtn, onValidSubmit, formRules, takePendingUpload, restoreSubmit, accountHeader, prefsPanel, weighbridgeSelect, WEIGHBRIDGES } from './core';
+import { loadSettings, loadFarm, saveSettings, saveProfile, saveFarm, changePassword, formValue, radioValue } from '../lib/settings';
 import { fetchMyMessages, sendSupportMessage } from '../lib/zvida-live';
 import type { PillTone } from './core';
 import { resolveDashboardSession } from '../lib/session';
@@ -101,18 +102,30 @@ formRules({
   fGrade: { req: true, msg: 'Select a grade.' },
   fMoist: { num: { min: 0, max: 60 }, msg: 'Moisture must be between 0 and 60%.' },
   fReserve: { req: true, num: { min: 0.01, max: 100000 }, msg: 'Enter a reserve price per ton.' },
+  fWeight: { req: true, msg: 'Choose your nearest weighbridge.' },
+  fName: { req: true, min: 2, max: 80, msg: 'Enter your full name.' },
+  fPhone: { min: 7, max: 40, msg: 'Enter a valid phone number.' },
+  fFarm: { req: true, min: 2, max: 80, msg: 'Enter your farm name.' },
+  fLoc: { req: true, min: 2, max: 80, msg: 'Enter your farm location.' },
+  fSize: { num: { min: 0.1, max: 100000, step: 0.1 }, msg: 'Enter a valid farm size in hectares.' },
+  fPay: { req: true, min: 3, max: 80, msg: 'Enter your payout method, e.g. EcoCash +263 77 123 4567.' },
+  fTax: { max: 30, msg: 'Tax number looks too long.' },
+  fPw: { req: true, min: 8, max: 72, msg: 'Use at least 8 characters.' },
+  fPw2: { req: true, msg: 'Re-enter your new password.' },
 });
 
 onValidSubmit('f-listing', (form) => {
   const controls = [...form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.dsh-input, .dsh-select')];
   const img = takePendingUpload('flist-img');
+  const wb = (controls[5]?.value || '').trim();
+  const wbNote = wb ? ` · Deliver to ${wb}` : '';
   if (isLiveMode()) {
     const commodity = (controls[0]?.value || 'Maize').trim();
     const qty = parseFloat(controls[1]?.value || '0') || 0;
     const reserve = parseFloat(controls[4]?.value || '0') || 0;
     marketAddProduct({
       id: 'fp' + Date.now(),
-      name: `${commodity} · ${qty}t · Reserve $${reserve}/t`,
+      name: `${commodity} · ${qty}t · Reserve $${reserve}/t${wbNote}`,
       category: 'Grain',
       price: reserve,
       unit: 't',
@@ -140,7 +153,7 @@ onValidSubmit('f-listing', (form) => {
       thumb: img || 'grain',
       badge: 'PENDING APPROVAL',
       badgeTone: 'amber',
-      meta: 'Submitted just now · Awaiting ZVIDA approval.',
+      meta: `Submitted just now · Weighbridge: ${wb || 'Ruwa'} · Awaiting ZVIDA approval.`,
       foot: `${btn('Withdraw', 'danger sm', 'Listing withdrawn', undefined, 'f-soya-new', 'withdraw')}`,
     });
     toast('Listing submitted for approval');
@@ -485,6 +498,8 @@ const P = {
               ${field('Moisture %', input('14.5', undefined, { val: 'fMoist', type: 'number', min: '0', step: '0.1' }))}
               ${field('Reserve Price ($/t)', input(LIST_EDIT ? SOYA.reserve : '200.00', undefined, { val: 'fReserve', type: 'number', min: '0', step: '1' }))}
             </div>
+            ${field('Nearest weighbridge', `${weighbridgeSelect('fWeight', { ph: true })}
+            <span class="dsh-hint" data-wb-note="fWeight">Certified ZVIDA weighbridges near: ${WEIGHBRIDGES.map((w) => w.town).join(' · ')}. Pick the closest to cut transport cost.</span>`)}
             ${LIST_EDIT ? banner('ok', `Editing your <b>Soya</b> listing — update and save.`) : banner('info', live ? 'ZVIDA reviews every listing before matching it to buyers.' : 'ZVIDA is currently offering <b>$295/t</b> for Maize.')}
             ${field('Collection type', `
               <div class="dsh-radio-row">
@@ -968,7 +983,189 @@ const P = {
           <div class="dsh-btn-row">${uploadBtn('Attach screenshot', 'ghost sm', 'image/*', { bucket: 'documents', key: 'ticket-img' })}${jsBtn('Submit Ticket', 'primary', 'submitTicket', '', 'Ticket #T-104 submitted — we reply within 24h')}</div>`,
       })}`,
   },
+  settings: {
+    id: 'settings',
+    label: 'Settings',
+    icon: ICON.settings,
+    title: 'Settings',
+    sub: 'Profile, farm & payments',
+    render: () => {
+      const live = isLiveMode();
+      const name = live ? (liveUserName() || 'Farmer') : 'James Moyo';
+      const email = live ? 'On file with ZVIDA' : 'james.moyo@farm.co.zw';
+      const verified = live ? `${pill('Pending verification', 'amber')}` : `ID + land title ${pill('Verified', 'green')}`;
+      const initials = name.split(' ').map((p) => p.charAt(0)).join('').slice(0, 2).toUpperCase() || 'F';
+      return `
+      ${accountHeader({
+        initials,
+        name,
+        role: 'Farmer · ZVIDAMBANO Traders',
+        email,
+        meta: live ? 'Account on file with ZVIDA' : 'Member since 2023',
+        verified: !live,
+        live,
+        stats: live ? [] : [
+          { label: 'Active contracts', value: '2' },
+          { label: 'Documents verified', value: '2' },
+          { label: 'Weighbridges near you', value: String(WEIGHBRIDGES.length) },
+        ],
+      })}
+      ${split(`
+        ${sec('Profile')}
+        ${panel({
+          title: 'Personal',
+          icon: ICON.users,
+          body: `
+            <div data-form>
+            ${profile([{ k: 'Email', v: email }, { k: 'Verification', v: verified }])}
+            <div data-async="farmer-profile-fill">
+              ${field('Full name', input(name, undefined, { val: 'fName' }))}
+              ${field('Phone', input('', 'e.g. +263 77 123 4567', { val: 'fPhone' }))}
+            </div>
+            <div class="dsh-btn-row">${submitBtn('Save Profile', 'primary', 'fm-profile')}</div>
+            </div>`,
+        })}
+        ${sec('Farm')}
+        ${panel({
+          title: 'My farm',
+          icon: ICON.farm,
+          body: `
+            <div data-form>
+            <div data-async="farmer-farm-fill">
+              ${field('Farm name', input(undefined, 'e.g. Moyo Family Farm', { val: 'fFarm' }))}
+              ${field('Location', input(undefined, 'e.g. Ruwa, Mashonaland East', { val: 'fLoc' }))}
+              ${field('Size (ha)', input(undefined, 'e.g. 25', { val: 'fSize', type: 'number', step: '0.1', min: '0.1' }))}
+            </div>
+            <div class="dsh-btn-row">${submitBtn('Save Farm', 'primary', 'fm-farm')}</div>
+            </div>`,
+        })}
+        <div data-async="farmer-prefs-fill"></div>
+      `, `
+        ${sec('Payment Details')}
+        ${panel({
+          title: 'Payouts',
+          icon: ICON.wallet,
+          body: `
+            <div data-form>
+            <div data-async="farmer-pay-fill">
+              ${field('Bank / Mobile money', input(undefined, 'e.g. EcoCash +263 7X XXX XXXX', { val: 'fPay' }))}
+              ${field('Tax number', input(undefined, 'e.g. ZW-XXXX-XXX', { val: 'fTax' }))}
+            </div>
+            <div class="dsh-btn-row">${submitBtn('Save Changes', 'primary', 'fm-settings')}</div>
+            </div>`,
+        })}
+        ${sec('Security')}
+        ${panel({
+          title: 'Change password',
+          icon: ICON.shield,
+          body: `
+            <div data-form>
+            ${field('New password', input(undefined, 'Min 8 characters', { val: 'fPw', type: 'password' }))}
+            ${pwCheck()}
+            ${field('Confirm new password', input(undefined, 'Repeat your new password', { val: 'fPw2', type: 'password' }))}
+            <div class="dsh-btn-row">${submitBtn('Update Password', 'primary', 'fm-security')}</div>
+            ${disclose({
+              title: 'Password rules',
+              summary: 'Why we ask for a strong password',
+              body: 'ZVIDA protects your payout details and contract data. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps your account safe.',
+            })}
+            </div>`,
+        })}
+        ${panel({
+          title: 'Documents',
+          icon: ICON.file,
+          body: live
+            ? banner('info', 'Your national ID and land documents will appear here once ZVIDA verifies them.')
+            : `${listRow(ICON.file, 'National ID', 'Verified · 63-123456-K-12', btn('View', 'ghost sm', 'Document preview is for demo accounts', '#documents'), 'plain')}
+            ${listRow(ICON.farm, 'Land title', 'Ruwa plot · 25 ha', btn('View', 'ghost sm', 'Document preview is for demo accounts', '#documents'), 'plain')}`,
+        })}
+      `)}
+    `;
+    },
+  },
 };
+
+asyncFills['farmer-profile-fill'] = async () => {
+  const s = await loadSettings();
+  const nm = s.name || (isLiveMode() ? liveUserName() : 'James Moyo');
+  const ph = s.phone || (isLiveMode() ? '' : '+263 77 123 4567');
+  return `${field('Full name', input(nm, undefined, { val: 'fName' }))}
+    ${field('Phone', input(ph, 'e.g. +263 77 123 4567', { val: 'fPhone' }))}`;
+};
+
+asyncFills['farmer-farm-fill'] = async () => {
+  const f = await loadFarm();
+  const nm = f.name || (isLiveMode() ? '' : 'James Moyo Family Farm');
+  const loc = f.location || (isLiveMode() ? '' : 'Ruwa, Mashonaland East');
+  const size = f.size || (isLiveMode() ? '' : '25');
+  return `${field('Farm name', input(nm, 'e.g. Moyo Family Farm', { val: 'fFarm' }))}
+    ${field('Location', input(loc, 'e.g. Ruwa, Mashonaland East', { val: 'fLoc' }))}
+    ${field('Size (ha)', input(size, 'e.g. 25', { val: 'fSize', type: 'number', step: '0.1', min: '0.1' }))}`;
+};
+
+asyncFills['farmer-pay-fill'] = async () => {
+  const s = await loadSettings();
+  const pay = s.payment || (isLiveMode() ? '' : 'EcoCash +263 77 123 4567');
+  const tax = s.tax || (isLiveMode() ? '' : 'ZW-2201-998');
+  return `${field('Bank / Mobile money', input(pay, 'e.g. EcoCash +263 7X XXX XXXX', { val: 'fPay' }))}
+    ${field('Tax number', input(tax, 'e.g. ZW-XXXX-XXX', { val: 'fTax' }))}`;
+};
+
+asyncFills['farmer-prefs-fill'] = async () => {
+  const s = await loadSettings();
+  return prefsPanel({ p: 'f', submit: 'fm-prefs', lang: s.language, cur: s.currency, email: s.notifyEmail !== 'off', sms: s.notifySms !== 'off' });
+};
+
+onValidSubmit('fm-profile', (form) => {
+  void saveProfile({ name: formValue(form, 'fName'), phone: formValue(form, 'fPhone') }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Profile updated');
+    else toast(r.error || 'Could not save profile', 'error');
+  });
+});
+
+onValidSubmit('fm-farm', (form) => {
+  void saveFarm({ name: formValue(form, 'fFarm'), location: formValue(form, 'fLoc'), size: formValue(form, 'fSize') }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Farm details saved');
+    else toast(r.error || 'Could not save farm details', 'error');
+  });
+});
+
+onValidSubmit('fm-settings', (form) => {
+  void saveSettings({ payment: formValue(form, 'fPay'), tax: formValue(form, 'fTax') }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Payout details saved');
+    else toast(r.error || 'Could not save payout details', 'error');
+  });
+});
+
+onValidSubmit('fm-prefs', (form) => {
+  void saveSettings({
+    language: formValue(form, 'fLang'),
+    currency: formValue(form, 'fCur'),
+    notifyEmail: radioValue(form, 'fNEmail'),
+    notifySms: radioValue(form, 'fNSms'),
+  }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Preferences saved');
+    else toast(r.error || 'Could not save preferences', 'error');
+  });
+});
+
+onValidSubmit('fm-security', (form) => {
+  const pws = [...form.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+  if (pws[1] && pws[1].value !== pws[0]?.value) {
+    toast('Passwords do not match', 'error');
+    restoreSubmit(form);
+    return;
+  }
+  void changePassword(pws[0]?.value || '').then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Password updated — use it to sign in next time');
+    else toast(r.error || 'Could not update password', 'error');
+  });
+});
 
 void (async () => {
 const session = await resolveDashboardSession('farmer');
@@ -985,13 +1182,13 @@ boot({
   accentLight: '#ecfdf5',
   accentRgb: '5, 150, 105',
   gradientEnd: '#10b981',
-  pages: [P.today, P.sell, P.shop, P.orders, P.cart, P.checkout, P['order-confirmed'], P.contracts, P.documents, P.finance, P.perf, P.farm, P.messages],
-  keepEmpty: ['shop', 'cart', 'checkout', 'order-confirmed', 'orders', 'sell', 'messages'],
+  pages: [P.today, P.sell, P.shop, P.orders, P.cart, P.checkout, P['order-confirmed'], P.contracts, P.documents, P.finance, P.perf, P.farm, P.messages, P.settings],
+  keepEmpty: ['shop', 'cart', 'checkout', 'order-confirmed', 'orders', 'sell', 'messages', 'settings'],
   navGroups: [
     { label: 'Overview', pages: ['today', 'sell', 'shop', 'orders'] },
     { label: 'Contracts', pages: ['contracts', 'finance'] },
     { label: 'My Farm', pages: ['farm', 'perf'] },
-    { label: 'Account', pages: ['documents', 'messages'] },
+    { label: 'Account', pages: ['documents', 'messages', 'settings'] },
   ],
   session,
 });

@@ -1,6 +1,14 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars, takePendingUpload } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars, takePendingUpload, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, formRules, accountHeader, prefsPanel } from './core';
+import { loadSettings, saveSettings, saveProfile, changePassword, formValue, radioValue } from '../lib/settings';
 import { resolveDashboardSession } from '../lib/session';
 import type { PillTone } from './core';
+
+formRules({
+  sName: { req: true, min: 2, max: 80, msg: 'Enter your full name.' },
+  sPhone: { min: 7, max: 40, msg: 'Enter a valid phone number.' },
+  spPw: { req: true, min: 8, max: 72, msg: 'Use at least 8 characters.' },
+  spPw2: { req: true, msg: 'Re-enter your new password.' },
+});
 
 wf('s-tk-1001', {
   assign: { to: 'ASSIGNED', tone: 'blue', toast: 'Ticket #1001 assigned to you', foot: pill('Assigned to you', 'blue') },
@@ -377,7 +385,139 @@ const P = {
       `)}
     `,
   },
+  settings: {
+    id: 'settings',
+    label: 'Settings',
+    icon: ICON.settings,
+    title: 'Settings',
+    sub: 'Profile, desk & security',
+    render: () => {
+      const live = isLiveMode();
+      const name = live ? (liveUserName() || 'Support') : 'Rudo Mutasa';
+      const email = live ? 'On file with ZVIDA' : 'support@zvidambano.co.zw';
+      const initials = name.split(' ').map((p) => p.charAt(0)).join('').slice(0, 2).toUpperCase() || 'S';
+      return `
+      ${accountHeader({
+        initials,
+        name,
+        role: 'Support Agent · ZVIDAMBANO Traders',
+        email,
+        meta: live ? 'Account on file with ZVIDA' : 'Member since 2024',
+        verified: true,
+        live,
+        stats: live ? [] : [
+          { label: 'Tickets this week', value: '32' },
+          { label: 'SLA compliance', value: '98%' },
+          { label: 'Shift', value: 'Mon–Fri' },
+        ],
+      })}
+      ${split(`
+        ${sec('Profile')}
+        ${panel({
+          title: 'Personal',
+          icon: ICON.users,
+          body: `
+            <div data-form>
+            ${profile([{ k: 'Email', v: email }, { k: 'Team', v: `${pill('Support Desk', 'green')}` }])}
+            <div data-async="support-profile-fill">
+              ${field('Full name', input(name, undefined, { val: 'sName' }))}
+              ${field('Phone', input('', 'e.g. +263 77 000 8800', { val: 'sPhone' }))}
+            </div>
+            <div class="dsh-btn-row">${submitBtn('Save Profile', 'primary', 'sp-profile')}</div>
+            </div>`,
+        })}
+        ${sec('Desk')}
+        ${panel({
+          title: 'ZVIDA Support Desk',
+          icon: ICON.support,
+          body: live
+            ? banner('info', 'Your desk assignments and availability are managed by the team lead.')
+            : profile([
+                { k: 'Desk', v: 'ZVIDA Support Desk' },
+                { k: 'Shift', v: 'Mon – Fri, 08:00 – 17:00' },
+                { k: 'Ticket routing', v: 'General queries' },
+              ]),
+        })}
+        <div data-async="support-prefs-fill"></div>
+      `, `
+        ${sec('Security')}
+        ${panel({
+          title: 'Change password',
+          icon: ICON.shield,
+          body: `
+            <div data-form>
+            ${field('New password', input(undefined, 'Min 8 characters', { val: 'spPw', type: 'password' }))}
+            ${pwCheck()}
+            ${field('Confirm new password', input(undefined, 'Repeat your new password', { val: 'spPw2', type: 'password' }))}
+            <div class="dsh-btn-row">${submitBtn('Update Password', 'primary', 'sp-security')}</div>
+            ${disclose({
+              title: 'Password rules',
+              summary: 'Why we ask for a strong password',
+              body: 'ZVIDA protects member data and support tools. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps the desk safe.',
+            })}
+            </div>`,
+        })}
+        ${panel({
+          title: 'Documents',
+          icon: ICON.file,
+          body: live
+            ? banner('info', 'Your employment documents and desk credentials are managed by the team lead.')
+            : `${listRow(ICON.file, 'Employment contract', 'Signed 2024', btn('View', 'ghost sm', 'Document preview is for demo accounts', '#reports'), 'plain')}
+            ${listRow(ICON.reports, 'SLA & metrics', 'Updated Jul 2026', btn('View', 'ghost sm', 'Document preview is for demo accounts', '#reports'), 'plain')}`,
+        })}
+      `)}
+    `;
+    },
+  },
 };
+
+asyncFills['support-profile-fill'] = async () => {
+  const s = await loadSettings();
+  const nm = s.name || (isLiveMode() ? liveUserName() : 'Rudo Mutasa');
+  const ph = s.phone || (isLiveMode() ? '' : '+263 77 000 8800');
+  return `${field('Full name', input(nm, undefined, { val: 'sName' }))}
+    ${field('Phone', input(ph, 'e.g. +263 77 000 8800', { val: 'sPhone' }))}`;
+};
+
+asyncFills['support-prefs-fill'] = async () => {
+  const s = await loadSettings();
+  return prefsPanel({ p: 's', submit: 'sp-prefs', lang: s.language, cur: s.currency, email: s.notifyEmail !== 'off', sms: s.notifySms !== 'off' });
+};
+
+onValidSubmit('sp-profile', (form) => {
+  void saveProfile({ name: formValue(form, 'sName'), phone: formValue(form, 'sPhone') }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Profile updated');
+    else toast(r.error || 'Could not save profile', 'error');
+  });
+});
+
+onValidSubmit('sp-prefs', (form) => {
+  void saveSettings({
+    language: formValue(form, 'sLang'),
+    currency: formValue(form, 'sCur'),
+    notifyEmail: radioValue(form, 'sNEmail'),
+    notifySms: radioValue(form, 'sNSms'),
+  }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Preferences saved');
+    else toast(r.error || 'Could not save preferences', 'error');
+  });
+});
+
+onValidSubmit('sp-security', (form) => {
+  const pws = [...form.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+  if (pws[1] && pws[1].value !== pws[0]?.value) {
+    toast('Passwords do not match', 'error');
+    restoreSubmit(form);
+    return;
+  }
+  void changePassword(pws[0]?.value || '').then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Password updated — use it to sign in next time');
+    else toast(r.error || 'Could not update password', 'error');
+  });
+});
 
 void (async () => {
 const session = await resolveDashboardSession('support');
@@ -394,11 +534,12 @@ boot({
   accentLight: '#f5f3ff',
   accentRgb: '124, 58, 237',
   gradientEnd: '#a78bfa',
-  pages: [P.inbox, P.tickets, P.users, P.disputes, P.reports],
-  keepEmpty: [],
+  pages: [P.inbox, P.tickets, P.users, P.disputes, P.reports, P.settings],
+  keepEmpty: ['settings'],
   navGroups: [
     { label: 'Operations', pages: ['inbox', 'tickets', 'disputes'] },
     { label: 'Platform', pages: ['users', 'reports'] },
+    { label: 'Account', pages: ['settings'] },
   ],
   session,
 });

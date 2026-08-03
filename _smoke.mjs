@@ -175,6 +175,62 @@ try {
       'cards=' + cards.length + ' grains=' + need.filter((n) => cards.includes(n)).length + '/6');
   }
 
+  // Settings page renders + CRUD handlers wired (demo persists to localStorage)
+  window.location.hash = '#settings';
+  window.dispatchEvent(new window.Event('hashchange'));
+  await new Promise((r) => setTimeout(r, 150));
+  ok('settings page renders', document.getElementById('dsh-title')?.textContent === 'Settings', String(document.getElementById('dsh-title')?.textContent));
+  const fills = [...document.querySelectorAll('[data-async]')];
+  ok('settings async fills present', fills.length > 0, 'fills=' + fills.length);
+  await new Promise((r) => setTimeout(r, 400));
+  const prefsBtn = document.querySelector('[data-form-submit="fm-prefs"], [data-form-submit="of-prefs"], [data-form-submit="zv-prefs"], [data-form-submit="sp-prefs"]');
+  ok('preferences panel renders', !!prefsBtn, String(!!prefsBtn));
+  if (!isReal) {
+    if (mode === 'farmer') {
+      const pay = document.querySelector('input[data-val="fPay"]');
+      const farm = document.querySelector('input[data-val="fFarm"]');
+      ok('demo payout prefilled', pay?.value === 'EcoCash +263 77 123 4567', String(pay?.value));
+      ok('demo farm prefilled', farm?.value === 'James Moyo Family Farm', String(farm?.value));
+      const btn = document.querySelector('[data-form-submit="fm-settings"]');
+      btn?.click();
+      await new Promise((r) => setTimeout(r, 150));
+      ok('demo payout save toasts', document.body.textContent.includes('Payout details saved'));
+      const payInput = document.querySelector('input[data-val="fPay"]');
+      if (payInput) {
+        payInput.value = 'EcoCash +263 77 999 8888';
+        payInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+      }
+      btn?.click();
+      await new Promise((r) => setTimeout(r, 150));
+      ok('demo payout edit saves again', document.body.textContent.includes('Payout details saved'));
+    } else if (mode === 'offtaker') {
+      const co = document.querySelector('input[data-val="ofCompany"]');
+      ok('demo company prefilled', co?.value === 'Miller Corporation', String(co?.value));
+    } else if (mode === 'zvida' || mode === 'support') {
+      const nm = document.querySelector('input[data-val="zName"], input[data-val="sName"]');
+      ok('demo profile prefilled', !!nm && nm.value.length > 0, String(nm?.value));
+    }
+  }
+
+  // Weighbridge picker on listing forms (Harare, Ruwa, Marondera, Concession, Glendale, Bindura)
+  if (mode === 'farmer') {
+    window.location.hash = '#sell';
+    window.dispatchEvent(new window.Event('hashchange'));
+    await new Promise((r) => setTimeout(r, 150));
+    const wb = document.querySelector('select[data-val="fWeight"]');
+    const opts = wb ? [...wb.querySelectorAll('option')].map((o) => o.value) : [];
+    const towns = ['Harare', 'Ruwa', 'Marondera', 'Concession', 'Glendale', 'Bindura'];
+    ok('listing weighbridge picker', opts.length === 7 && towns.every((t) => opts.includes(t)), 'options=' + opts.join(','));
+  } else if (mode === 'offtaker') {
+    window.location.hash = '#buy';
+    window.dispatchEvent(new window.Event('hashchange'));
+    await new Promise((r) => setTimeout(r, 150));
+    const wbs = [...document.querySelectorAll('select[data-val="oPoint"]')];
+    const opts = wbs.length ? [...wbs[0].querySelectorAll('option')].map((o) => o.value) : [];
+    const towns = ['Harare', 'Ruwa', 'Marondera', 'Concession', 'Glendale', 'Bindura'];
+    ok('RFQ weighbridge picker', wbs.length > 0 && opts.length === 7 && towns.every((t) => opts.includes(t)), 'forms=' + wbs.length + ' options=' + opts.join(','));
+  }
+
   // Dark mode toggle
   const themeBtn = document.getElementById('dsh-theme');
   themeBtn?.dispatchEvent(new window.Event('click', { bubbles: true }));
