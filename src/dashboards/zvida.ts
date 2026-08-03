@@ -1,4 +1,27 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments, emptyState, formRules, FORM_RULES, checkField, refresh } from './core';
+import { resolveDashboardSession } from '../lib/session';
+import { liveConfigured, getLiveAccount } from '../lib/zvida-live';
+import { supabase } from '../lib/supabase';
+import { invokeCreateContract } from '../lib/backend';
+
+formRules({
+  zPrice: { req: true, num: { min: 0.01, max: 100000 }, msg: 'Enter a ZVIDA price above $0.' },
+});
+
+JS.approveListing = (key: string, el: HTMLElement) => {
+  const card = el.closest('.dsh-item') as HTMLElement | null;
+  const price = card?.querySelector<HTMLInputElement>('input[data-val="zPrice"]');
+  if (price && !checkField(price, FORM_RULES.zPrice, true)) {
+    toast('Enter a valid ZVIDA price above $0', 'error');
+    return;
+  }
+  const wfBtn = card?.querySelector<HTMLElement>('[data-wf][data-wf-a="approve"]');
+  if (wfBtn) {
+    wfBtn.click();
+    return;
+  }
+  toast('Listing approved — supplier notified');
+};
 
 JS.callDriver = (who) => {
   toast(`Dialing ${who} — placing the call from your phone`, 'info');
@@ -10,6 +33,60 @@ JS.exportTax = () => {
 JS.exportCarbon = () => {
   downloadNow('z-carbon');
   toast('Carbon footprint report exported');
+};
+
+/* Real contract creation for live admin/broker accounts. In demo mode the
+   button keeps its original "contract created" toast. In live mode it wires
+   the newest active listing (farmer) to an offtaker through create-contract,
+   creating the delivery row so the assigned driver sees the consignment. */
+JS.zAutoMatch = async (_payload: string) => {
+  if (!liveConfigured()) {
+    toast('Contract created — parties notified');
+    return;
+  }
+  try {
+    const [{ data: farmers }, { data: offtakers }, { data: drivers }, { data: commodities }, { data: listings }] = await Promise.all([
+      supabase.from('users').select('id, full_name').eq('role', 'farmer').order('created_at', { ascending: true }).limit(1),
+      supabase.from('users').select('id, full_name').eq('role', 'offtaker').order('created_at', { ascending: true }).limit(1),
+      supabase.from('users').select('id, full_name').eq('role', 'driver').order('created_at', { ascending: true }).limit(1),
+      supabase.from('commodities').select('id, name').limit(1),
+      supabase.from('listings').select('id, asking_price').eq('status', 'active').limit(1),
+    ]);
+    const farmer = farmers?.[0];
+    const offtaker = offtakers?.[0];
+    const driver = drivers?.[0];
+    const commodity = commodities?.[0];
+    const broker = getLiveAccount();
+    if (!farmer || !offtaker || !commodity || !broker) {
+      toast('Add at least one farmer, offtaker and commodity first', 'warn');
+      return;
+    }
+    const listing = listings?.[0];
+    const farmerPrice = listing && Number(listing.asking_price) > 0 ? Number(listing.asking_price) : 200;
+    const quantity = 10000; // 10 t in kg
+    const res = await invokeCreateContract({
+      farmer_id: farmer.id,
+      offtaker_id: offtaker.id,
+      broker_id: broker.id,
+      commodity_id: commodity.id,
+      listing_id: listing?.id,
+      quantity,
+      unit: 'kg',
+      farmer_price: farmerPrice,
+      offtaker_price: Math.max(1, Math.round(farmerPrice * 1.2)),
+      delivery: driver ? { driver_id: driver.id, origin: 'Supplier farm', destination: 'ZVIDA Depot', vehicle_reg: '—' } : undefined,
+    });
+    if (res.error) {
+      console.error('[zAutoMatch]', res.error);
+      toast('Contract creation failed — see console', 'error');
+      return;
+    }
+    toast('Contract created — parties notified');
+    refresh();
+  } catch (e) {
+    console.error('[zAutoMatch]', e);
+    toast('Contract creation failed', 'error');
+  }
 };
 
 registerDownload('z-tax', 'Tax_Compliance_Jul31.csv', [
@@ -88,6 +165,7 @@ const P = {
     render: () => `
       ${hero({
         kick: 'Operations overview',
+        status: { label: 'Trading live', tone: 'live' },
         title: 'Control Tower',
         sub: 'Today’s spread sits at $4,200 across 12 open loads. Review urgent events, approvals and risk flags below.',
         actions: `${btn('Match Trade', 'onlight', 'Opening blind matching', '#matches')}${btn('Release Payment', 'onlight', 'Opening pending payments', '#payments')}`,
@@ -279,7 +357,7 @@ const P = {
         ${smartMatch(2, 'Wheat', 15, 380, 420, 600, 'ANON-3', 'ANON-B3', 40)}
         ${smartMatch(3, 'Soya', 10, 450, 500, 500, 'ANON-2', 'ANON-B2', 70)}
       </div>
-      <div class="dsh-btn-row" style="margin-top:16px">${btn('Match All', 'primary', '5 contracts created — parties notified', undefined, 'z-matchall', 'all')}</div>
+      <div class="dsh-btn-row" style="margin-top:16px">${jsBtn('Match All', 'primary', 'zAutoMatch', 'all', '5 contracts created — parties notified')}</div>
     `,
   },
   deliveries: {
@@ -303,9 +381,9 @@ const P = {
       ${banner('info', 'Consignment ledger — the first and second weighbridge weights set the net (scale loads use bucket counts). Payments sit at <b>awaiting ZVIDA</b> until settlement on the agreed COD / COC / NET terms.')}
       ${split(`
         ${sec('Freight Feed', 'Open report', 'Opening freight report', undefined, '#reports')}
-        ${freightFeed(loads, 4)}
+        ${loads.length ? freightFeed(loads, 4) : emptyState({ icon: ICON.truck, title: 'No consignments yet', sub: 'The activity feed will fill as contracts move through weighbridge, transit and settlement.', action: 'Open matching', actionHref: '#matches' })}
         ${sec('Open Consignments', 'Settled history', 'Opening settled consignments', k.paid, '#payments')}
-        ${active.map((l) => loadCard(l, 'admin')).join('')}
+        ${active.length ? active.map((l) => loadCard(l, 'admin')).join('') : emptyState({ icon: ICON.deliveries, title: 'No open consignments', sub: 'When contracts are matched and dispatched, live load cards will appear here.', action: 'Open matching', actionHref: '#matches' })}
       `, `
         ${panel({
           title: 'Movement Overview',
@@ -516,7 +594,7 @@ const P = {
       ${banner('info', 'Monitor orders end-to-end: ZVIDA confirms, driver delivers, payment releases. Escalate when a customer disputes a transaction.')}
       ${sec('Order Board', 'Review disputes', 'Opening resolution desk', orders.length, '#disputes')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete', 'Escalated'], 0, 'zmkt')}
-      ${orders.map((o) => marketOrderGroup(o, 'admin', 'zmkt', marketBucket(o.status))).join('')}
+      ${orders.length ? orders.map((o) => marketOrderGroup(o, 'admin', 'zmkt', marketBucket(o.status))).join('') : emptyState({ icon: ICON.orders, title: 'No orders on the board', sub: 'Orders placed by farmers and offtakers will appear here for ZVIDA to oversee.', action: 'Open matching', actionHref: '#matches' })}
     `;
     },
   },
@@ -535,8 +613,8 @@ function pendingListing(supplier: string, art: string, commodity: string, qty: n
       <div class="dsh-item-meta">${loc} · ${grade} · Moisture ${moisture}% · Reserve <b>$${reserve}/t</b></div>
       ${spoilageNote ? `<div style="font-size:12px;color:var(--dsh-warn);margin-top:4px">${svg(ICON.clock)} ${spoilageNote}</div>` : ''}
       <div class="dsh-item-foot">
-        ${field('ZVIDA price', `<span style="display:flex;align-items:center;gap:8px"><span>$</span><input class="dsh-input" value="${suggested}.00" style="max-width:110px" /></span>`, `Suggested spread: $${suggested - reserve}/t`)}
-        <div class="dsh-btn-row">${btn('Approve', 'success', `Listing approved — ${supplier} notified`, undefined, key, 'approve')}${btn('Reject', 'danger', 'Listing rejected', undefined, key, 'reject')}</div>
+        ${field('ZVIDA price', `<span style="display:flex;align-items:center;gap:8px"><span>$</span><input class="dsh-input" data-val="zPrice" type="number" min="0" step="0.01" value="${suggested}" style="max-width:110px" /></span>`, `Suggested spread: $${suggested - reserve}/t`)}
+        <div class="dsh-btn-row">${jsBtn('Approve', 'success', 'approveListing', key)}${btn('Reject', 'danger', 'Listing rejected', undefined, key, 'reject')}<span style="display:none">${btn('', 'ghost sm', undefined, undefined, key, 'approve')}</span></div>
       </div>
     </div>
   </div>`;
@@ -557,7 +635,7 @@ function smartMatch(rank: number, commodity: string, qty: number, sp: number, bp
       <div class="dsh-queue-meta">${qty}t @ $${sp} / $${bp}</div>
     </div>
     <div class="dsh-queue-spread"><div class="v">$${spread}</div><div class="l">spread</div></div>
-    ${btn('Auto-Match', 'primary sm', `Contract created: ${commodity} ${qty}t`, undefined, 'z-automatch', 'match')}
+    ${jsBtn('Auto-Match', 'primary sm', 'zAutoMatch', commodity, `Contract created: ${commodity} ${qty}t`)}
   </div>`;
 }
 
@@ -581,6 +659,9 @@ function paymentCard(title: string, parties: string, payout: string, invoice: st
   </div>`;
 }
 
+void (async () => {
+const session = await resolveDashboardSession(['broker', 'admin', 'compliance']);
+if (!session) return;
 boot({
   key: 'zvida',
   name: 'Admin',
@@ -594,10 +675,13 @@ boot({
   accentRgb: '37, 99, 235',
   gradientEnd: '#60a5fa',
   pages: [P.control, P.marketplace, P.listings, P.matches, P.deliveries, P.documents, P.disputes, P.payments, P.reports],
+  keepEmpty: ['marketplace'],
   navGroups: [
     { label: 'Overview', pages: ['control'] },
     { label: 'Trading', pages: ['listings', 'matches', 'payments'] },
     { label: 'Operations', pages: ['deliveries', 'marketplace', 'documents', 'disputes'] },
     { label: 'Analytics', pages: ['reports'] },
   ],
+  session,
 });
+})();

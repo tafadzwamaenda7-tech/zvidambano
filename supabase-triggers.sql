@@ -139,23 +139,89 @@ CREATE TRIGGER trigger_notify_delivery_status
 -- ============================================================
 -- 4. AUTO-UPDATE CONTRACT STATUS WHEN DELIVERY IS DELIVERED
 -- ============================================================
-CREATE OR REPLACE FUNCTION update_contract_on_delivery()
-RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION mark_contract_delivered()
+RETURNS TRIGGER AS $function$
 BEGIN
-  IF NEW.status = 'DELIVERED' AND (OLD.status IS NULL OR OLD.status != 'DELIVERED') THEN
-    UPDATE contracts
-    SET status = 'PENDING_SETTLEMENT'
-    WHERE id = NEW.contract_id;
+  IF TG_OP = 'UPDATE' AND NEW.status = 'DELIVERED' AND OLD.status IS DISTINCT FROM 'DELIVERED' THEN
+    UPDATE public.contracts
+      SET status = CASE
+            WHEN status IN ('PENDING','LOADING','WEIGHED_1','FIRST_WEIGHT','IN_TRANSIT','OFFLOADING','WEIGHED_2','SECOND_WEIGHT') THEN 'PENDING_SETTLEMENT'
+            ELSE status
+          END,
+          updated_at = now()
+      WHERE id = NEW.contract_id
+        AND status NOT IN ('PAID','SUCCESSFUL','CANCELLED');
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$function$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS trigger_update_contract_on_delivery ON public.deliveries;
-CREATE TRIGGER trigger_update_contract_on_delivery
+DROP TRIGGER IF EXISTS trg_mark_contract_delivered ON public.deliveries;
+CREATE TRIGGER trg_mark_contract_delivered
   AFTER UPDATE ON public.deliveries
   FOR EACH ROW
-  EXECUTE FUNCTION update_contract_on_delivery();
+  EXECUTE FUNCTION mark_contract_delivered();
+
+-- ============================================================
+-- 4b. AUTO-GENERATE SETTLEMENT/INVOICE/COMMISSION/PAYMENT WHEN
+--     CONTRACT REACHES WEIGHED_2/PENDING_SETTLEMENT/SUCCESSFUL
+--     (tonne math: (quantity)/1000 when unit = 'kg')
+-- ============================================================
+CREATE OR REPLACE FUNCTION generate_settlement_on_completion()
+RETURNS TRIGGER AS $function$
+DECLARE
+  tonnes numeric := CASE WHEN coalesce(NEW.unit, 'kg') = 'kg' THEN coalesce(NEW.quantity, 0) / 1000.0 ELSE coalesce(NEW.quantity, 0) END;
+  gross_farmer numeric := tonnes * coalesce(NEW.farmer_price, 0);
+  gross_offtaker numeric := tonnes * coalesce(NEW.offtaker_price, 0);
+  commission_amount numeric := tonnes * coalesce(NEW.broker_commission, 0);
+  spread numeric := gross_offtaker - gross_farmer - commission_amount;
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.status IN ('WEIGHED_2','PENDING_SETTLEMENT','SUCCESSFUL')
+     AND OLD.status NOT IN ('WEIGHED_2','PENDING_SETTLEMENT','SUCCESSFUL') THEN
+
+    IF NEW.farmer_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.farmer_settlements fs WHERE fs.contract_id = NEW.id
+    ) THEN
+      INSERT INTO public.farmer_settlements (contract_id, farmer_id, gross_amount, amount, net_payout, description, status)
+      VALUES (NEW.id, NEW.farmer_id, gross_farmer, gross_farmer, gross_farmer,
+              'Auto settlement for contract ' || NEW.contract_number, 'PENDING');
+    END IF;
+
+    IF NEW.offtaker_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.offtaker_invoices oi WHERE oi.contract_id = NEW.id
+    ) THEN
+      INSERT INTO public.offtaker_invoices (contract_id, offtaker_id, total_amount, amount, description, status)
+      VALUES (NEW.id, NEW.offtaker_id, gross_offtaker, gross_offtaker,
+              'Auto invoice for contract ' || NEW.contract_number, 'PENDING');
+    END IF;
+
+    IF NEW.broker_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.broker_commission_ledger bcl WHERE bcl.contract_id = NEW.id
+    ) THEN
+      INSERT INTO public.broker_commission_ledger (contract_id, broker_id, commission_amount, amount,
+        farmer_buy_price, offtaker_sell_price, spread, description, status)
+      VALUES (NEW.id, NEW.broker_id, commission_amount, commission_amount,
+              NEW.farmer_price, NEW.offtaker_price, spread,
+              'Auto commission for contract ' || NEW.contract_number, 'PENDING');
+    END IF;
+
+    IF NEW.offtaker_id IS NOT NULL AND NEW.broker_id IS NOT NULL AND NOT EXISTS (
+      SELECT 1 FROM public.payments p WHERE p.contract_id = NEW.id AND p.reference = NEW.contract_number
+    ) THEN
+      INSERT INTO public.payments (contract_id, payer_id, payee_id, amount, method, reference, status)
+      VALUES (NEW.id, NEW.offtaker_id, NEW.broker_id, gross_offtaker, 'ZVIDA Wallet', NEW.contract_number, 'PENDING');
+    END IF;
+
+  END IF;
+  RETURN NEW;
+END;
+$function$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_generate_settlement ON public.contracts;
+CREATE TRIGGER trg_generate_settlement
+  AFTER UPDATE ON public.contracts
+  FOR EACH ROW
+  EXECUTE FUNCTION generate_settlement_on_completion();
 
 -- ============================================================
 -- 5. AUTO-NOTIFY ON PAYMENT STATUS CHANGE
@@ -454,6 +520,58 @@ DROP TRIGGER IF EXISTS audit_payments_trigger ON public.payments;
 CREATE TRIGGER audit_payments_trigger
   AFTER INSERT OR UPDATE OR DELETE ON public.payments
   FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
+
+-- ============================================================
+-- 13b. AUTO-NOTIFY ON INPUT ORDER & MARKET ORDER CHANGES
+-- ============================================================
+CREATE OR REPLACE FUNCTION notify_input_order_change()
+RETURNS TRIGGER AS $function$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO public.notifications (user_id, title, body, type, action_url)
+    VALUES (NEW.supplier_id, 'New input order',
+            (SELECT full_name FROM public.users WHERE id = NEW.farmer_id) || ' ordered inputs from you.',
+            'order', '/vendor-dashboard.html#orders');
+  ELSIF TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status THEN
+    INSERT INTO public.notifications (user_id, title, body, type, action_url)
+    VALUES (NEW.farmer_id, 'Input order is ' || replace(NEW.status, '_', ' '),
+            'Your input order status changed.', 'order', '/farmer-dashboard.html#orders');
+  END IF;
+  RETURN NEW;
+END;
+$function$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_notify_input_order ON public.input_orders;
+CREATE TRIGGER trg_notify_input_order
+  AFTER INSERT OR UPDATE ON public.input_orders
+  FOR EACH ROW EXECUTE FUNCTION notify_input_order_change();
+
+CREATE OR REPLACE FUNCTION notify_market_order_change()
+RETURNS TRIGGER AS $function$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    INSERT INTO public.notifications (user_id, title, body, type, action_url)
+    SELECT u.id, 'New order ' || NEW.ref,
+           (coalesce(NEW.buyer, 'A buyer') || ' placed an order for your product.'),
+           'order', '/vendor-dashboard.html#orders'
+    FROM jsonb_array_elements(coalesce(NEW.items, '[]'::jsonb)) AS it
+    JOIN public.users u ON u.full_name = it->>'seller'
+    ON CONFLICT DO NOTHING;
+  ELSIF TG_OP = 'UPDATE' AND NEW.status IS DISTINCT FROM OLD.status THEN
+    IF NEW.user_id IS NOT NULL THEN
+      INSERT INTO public.notifications (user_id, title, body, type, action_url)
+      VALUES (NEW.user_id, 'Order ' || NEW.ref || ' is ' || replace(NEW.status, '_', ' '),
+              'Your order status changed.', 'order', '/farmer-dashboard.html#orders');
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$function$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_notify_market_order ON public.market_orders;
+CREATE TRIGGER trg_notify_market_order
+  AFTER INSERT OR UPDATE ON public.market_orders
+  FOR EACH ROW EXECUTE FUNCTION notify_market_order_change();
 
 -- ============================================================
 -- 14. FULL-TEXT SEARCH on listings

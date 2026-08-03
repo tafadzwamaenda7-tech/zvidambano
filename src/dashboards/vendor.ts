@@ -1,9 +1,58 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, img, itemCard, profile, wf, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, chips, miniBar, marketCatalog, marketAddProduct, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, zdocDocuments } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, img, itemCard, profile, wf, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, chips, miniBar, marketCatalog, marketAddProduct, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, disclose, submitBtn, onValidSubmit, formRules, takePendingUpload } from './core';
+import type { LiveProduct } from '../lib/zvida-live';
+import { persistProduct } from '../lib/zvida-live';
+import { resolveDashboardSession } from '../lib/session';
 import type { PillTone, MarketProduct } from './core';
 
 const VENDOR = 'Vendor Supplies Ltd';
 
+/* Demo accounts act as "Vendor Supplies Ltd"; real vendors are scoped to the
+   name on their account (their listings/orders carry it as the seller). */
+function vendorSeller(): string {
+  return isLiveMode() ? liveUserName() : VENDOR;
+}
+
 let PROD_EDIT: null | { oldName: string; name: string; price: string; unit: string } = null;
+
+formRules({
+  vProdName: { req: true, min: 3, max: 60, msg: 'Give the product a clear name (3+ characters).' },
+  vCategory: { req: true, msg: 'Please choose a category.' },
+  vPrice: { req: true, num: { min: 0.01, max: 100000 }, msg: 'Enter a price greater than 0.' },
+  vUnit: { req: true, min: 1, max: 24, msg: 'e.g. 50kg bag, 1L, per unit.' },
+  vStock: { num: { min: 0, max: 100000 }, msg: 'Enter a whole number of units in stock.' },
+  vReorder: { num: { min: 0, max: 100000 }, msg: 'Enter the level that triggers a restock.' },
+});
+
+onValidSubmit('v-product', (form) => {
+  const ins = [...form.querySelectorAll<HTMLInputElement>('.dsh-input')];
+  const category = form.querySelector<HTMLSelectElement>('.dsh-select')?.value || 'Fertilizer';
+  const name = (ins[0]?.value || '').trim();
+  const price = parseFloat((ins[1]?.value || '0').replace(/[$ ,]/g, '')) || 0;
+  const unit = (ins[2]?.value || '').trim();
+  const stock = parseInt(ins[3]?.value || '0', 10) || 0;
+  if (PROD_EDIT) {
+    const oldName = PROD_EDIT.oldName;
+    const p = marketCatalog(vendorSeller()).find((x) => x.name === oldName);
+    if (p) {
+      p.name = name;
+      p.price = price;
+      p.unit = unit;
+      const img = takePendingUpload('vprod-img');
+      if (img) {
+        p.thumb = img;
+        void persistProduct(p as unknown as LiveProduct);
+      }
+    }
+    PROD_EDIT = null;
+    toast('Product updated');
+  } else {
+    const p: MarketProduct = { id: 'v' + Date.now(), name, category, price, unit, seller: vendorSeller(), stock, rating: 4.5, reviews: 0, thumb: takePendingUpload('vprod-img') || 'fert' };
+    marketAddProduct(p);
+    toast('Product listed for sale');
+  }
+  window.location.hash = '#today';
+  window.location.hash = '#listings';
+});
 
 JS.callBuyer = () => {
   toast('Dialing ZVIDA — placing the call from your phone', 'info');
@@ -29,36 +78,6 @@ JS.cancelProdEdit = () => {
   window.location.hash = '#today';
   window.location.hash = cur || '#listings';
   toast('Edit cancelled', 'info');
-};
-JS.submitProduct = () => {
-  const ins = document.querySelectorAll<HTMLInputElement>('.dsh-input');
-  if (PROD_EDIT) {
-    const name = (ins[0]?.value || PROD_EDIT.name).trim() || PROD_EDIT.name;
-    const price = parseFloat((ins[1]?.value || PROD_EDIT.price).replace(/[$ ,]/g, '')) || 0;
-    const unit = (ins[2]?.value || PROD_EDIT.unit).trim() || PROD_EDIT.unit;
-    const oldName = PROD_EDIT.oldName;
-    const p = marketCatalog(VENDOR).find((x) => x.name === oldName);
-    if (p) {
-      p.name = name;
-      p.price = price;
-      p.unit = unit;
-    }
-    PROD_EDIT = null;
-    window.location.hash = '#today';
-    window.location.hash = '#listings';
-    toast('Product updated');
-    return;
-  }
-  const category = document.querySelector<HTMLSelectElement>('.dsh-select')?.value || 'Fertilizer';
-  const name = (ins[0]?.value || '').trim() || 'New Product';
-  const price = parseFloat((ins[1]?.value || '0').replace(/[$ ,]/g, '')) || 0;
-  const unit = (ins[2]?.value || '').trim() || 'unit';
-  const stock = parseInt(ins[3]?.value || '0', 10) || 0;
-  const p: MarketProduct = { id: 'v' + Date.now(), name, category, price, unit, seller: VENDOR, stock, rating: 4.5, reviews: 0, thumb: 'fert' };
-  marketAddProduct(p);
-  toast('Product listed for sale');
-  window.location.hash = '#today';
-  window.location.hash = '#listings';
 };
 JS.saveVendorSettings = () => {
   const b = document.querySelector('[data-js="saveVendorSettings"]') as HTMLButtonElement | null;
@@ -101,12 +120,13 @@ const P = {
     title: 'Today',
     sub: 'Vendor Supplies Ltd',
     render: () => {
-      const mine = marketOrders(VENDOR);
+      const mine = marketOrders(vendorSeller());
       const open = mine.filter((o) => !['DELIVERED', 'CANCELLED'].includes(o.status));
       const newCount = mine.filter((o) => o.status === 'NEW').length;
       return `
       ${hero({
         kick: 'Vendor Supplies Ltd · Verified',
+        status: { label: 'Store live', tone: 'live' },
         title: 'Good morning',
         sub: `${open.length} orders to fulfil and 7 low-stock items need attention today.`,
         actions: `${btn('New Order', 'primary', 'Opening new orders', '#orders')}`,
@@ -131,7 +151,7 @@ const P = {
       ])}
       ${split(`
         ${sec('Orders to Fulfil', 'View all', 'Opening order pipeline', undefined, '#orders')}
-        ${open.length === 0 ? banner('ok', 'No open orders right now. New orders from ZVIDA customers will appear here.') : open.slice(0, 3).map((o) => marketOrderCard(o, 'seller')).join('')}
+        ${open.length === 0 ? emptyState({ icon: ICON.orders, title: 'No orders to fulfil yet', sub: 'When ZVIDA customers buy your products, new orders will appear here for you to confirm and dispatch.', action: 'Add a product', actionHref: '#listings' }) : open.slice(0, 3).map((o) => marketOrderCard(o, 'seller')).join('')}
       `, `
         ${sec('Low Stock Alerts')}
         ${banner('warn', '7 items below reorder level. Restock advised this week.', 'View stock', 'Opening inventory', '#inventory')}
@@ -192,39 +212,40 @@ const P = {
           title: 'New product',
           icon: ICON.plus,
           body: `
+            <div data-form>
             <div class="dsh-field-grid">
-              ${field('Product name', input(PROD_EDIT ? PROD_EDIT.name : undefined, 'e.g. NPK Fertilizer'))}
-              ${field('Category', select(['Fertilizer', 'Seeds', 'Chemicals', 'Stockfeed', 'Livestock', 'Equipment'], PROD_EDIT ? 0 : 0))}
+              ${field('Product name', input(PROD_EDIT ? PROD_EDIT.name : undefined, 'e.g. NPK Fertilizer', { val: 'vProdName' }))}
+              ${field('Category', select(['Fertilizer', 'Seeds', 'Chemicals', 'Stockfeed', 'Livestock', 'Equipment'], PROD_EDIT ? 0 : -1, { val: 'vCategory', ph: true }))}
             </div>
             <div class="dsh-field-grid">
-              ${field('Price', input(PROD_EDIT ? PROD_EDIT.price : undefined, '$ 45.00'))}
-              ${field('Unit', input(PROD_EDIT ? PROD_EDIT.unit : undefined, '50kg bag'))}
+              ${field('Price', input(PROD_EDIT ? PROD_EDIT.price : undefined, '$ 45.00', { val: 'vPrice' }))}
+              ${field('Unit', input(PROD_EDIT ? PROD_EDIT.unit : undefined, '50kg bag', { val: 'vUnit' }))}
             </div>
             <div class="dsh-field-grid">
-              ${field('Stock quantity', input('20'))}
-              ${field('Reorder level', input('5'))}
+              ${field('Stock quantity', input('20', undefined, { val: 'vStock', type: 'number', min: '0', step: '1' }))}
+              ${field('Reorder level', input('5', undefined, { val: 'vReorder', type: 'number', min: '0', step: '1' }))}
             </div>
             <div style="margin-bottom:14px">
               <span class="dsh-label">Product image</span>
               ${img('fert', 'wide')}
-              <div style="margin-top:10px">${uploadBtn('Upload image', 'ghost sm', 'image/*')}</div>
+              <div style="margin-top:10px">${uploadBtn('Upload image', 'ghost sm', 'image/*', { bucket: 'listing-photos', key: 'vprod-img' })}</div>
             </div>
             ${PROD_EDIT ? banner('ok', `Editing <b>${PROD_EDIT.name}</b> — update and save.`) : ''}
-            <div class="dsh-btn-row">${PROD_EDIT ? jsBtn('Cancel', 'ghost', 'cancelProdEdit', 'listings', 'Edit cancelled') : ''}${jsBtn(PROD_EDIT ? 'Save Changes' : 'Submit Listing', 'primary', 'submitProduct', '', PROD_EDIT ? 'Product updated' : 'Product listed for sale')}</div>`,
+            <div class="dsh-btn-row">${PROD_EDIT ? jsBtn('Cancel', 'ghost', 'cancelProdEdit', 'listings', 'Edit cancelled') : ''}${submitBtn(PROD_EDIT ? 'Save Changes' : 'Submit Listing', 'primary', 'v-product')}</div>
+            </div>`,
         })}
       `, `
         ${sec('Active Listings')}
-        ${panel({
-          body: `
+        ${marketCatalog(vendorSeller()).length ? panel({ body: `
             <div data-vend-list>
-            ${table(['Product', 'Price', 'Unit', 'Stock', 'Status', ''], marketCatalog(VENDOR).map((p) => [p.name, marketMoney(p.price), p.unit, String(p.stock), p.stock <= 0 ? pill('Out of stock', 'red') : pill('Active', 'green'), jsBtn('Edit', 'ghost sm', 'editProduct', '', 'Product loaded into the form')]))}
-            </div>`,
-          flush: true,
-        })}
-        ${panel({
-          title: 'Selling Tips',
-          icon: ICON.spark,
-          body: banner('info', 'Products with real photos sell <b>2.4x</b> faster on average. Keep photos fresh.'),
+            ${table(['Product', 'Price', 'Unit', 'Stock', 'Status', ''], marketCatalog(vendorSeller()).map((p) => [p.name, marketMoney(p.price), p.unit, String(p.stock), p.stock <= 0 ? pill('Out of stock', 'red') : pill('Active', 'green'), jsBtn('Edit', 'ghost sm', 'editProduct', '', 'Product loaded into the form')]))}
+            </div>`, flush: true }) : emptyState({ icon: ICON.listings, title: 'No products listed yet', sub: 'Add your first product and it will appear here, live for ZVIDA customers to order.', action: 'Add a product', actionToast: 'Scroll up to the product form' })}
+        ${disclose({
+          title: 'Selling tips for higher sales',
+          summary: '3 quick wins',
+          body: `${banner('info', 'Products with real photos sell <b>2.4x</b> faster on average. Keep photos fresh.')}
+            <div class="dsh-sk-row" style="border:none;padding:6px 0">${listRow(ICON.spark, 'Price competitively', 'Match the ZVIDA market guide on the Marketplace page.')}</div>
+            <div class="dsh-sk-row" style="border:none;padding:6px 0">${listRow(ICON.check, 'Keep stock accurate', 'Update quantities daily so buyers never order out-of-stock items.')}</div>`,
         })}
       `)}
     `,
@@ -236,14 +257,13 @@ const P = {
     title: 'Orders',
     sub: 'Order pipeline',
     render: () => {
-      const mine = marketOrders(VENDOR);
+      const mine = marketOrders(vendorSeller());
       const newCount = mine.filter((o) => o.status === 'NEW').length;
       return `
       ${banner('info', `${newCount} new orders awaiting your confirmation.`, 'Fulfil now', 'Showing new orders', '#orders')}
       ${sec('Order Pipeline', 'Manage listings', 'Opening your inventory', mine.length, '#inventory')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete'], 0, 'vord')}
-      ${mine.map((o) => marketOrderGroup(o, 'seller', 'vord', marketBucket(o.status))).join('')}
-      ${mine.length === 0 ? banner('ok', 'No orders yet. ZVIDA will send you orders as customers buy your products.') : ''}
+      ${mine.length === 0 ? emptyState({ icon: ICON.orders, title: 'No orders yet', sub: 'Once customers start buying, every order shows here with its fulfilment pipeline.', action: 'Add a product', actionHref: '#listings' }) : mine.map((o) => marketOrderGroup(o, 'seller', 'vord', marketBucket(o.status))).join('')}
     `;
     },
   },
@@ -254,7 +274,7 @@ const P = {
     title: 'Dispatch',
     sub: 'Consignments to ZVIDA',
     render: () => {
-      const mine = loadCatalog().filter((l) => l.supplier === VENDOR);
+      const mine = loadCatalog().filter((l) => l.supplier === vendorSeller());
       const open = mine.filter((l) => !['PAID', 'CANCELLED'].includes(l.status));
       const settled = mine.filter((l) => l.status === 'PAID');
       const payout = mine.filter((l) => l.status === 'PENDING_PAYMENT').reduce((s, l) => s + l.amount, 0);
@@ -266,7 +286,7 @@ const P = {
       ])}
       ${banner('info', 'Dispatch fertilizer and inputs to ZVIDA depots. Record the first weighbridge weight to start the consignment — ZVIDA pays on NET_21.')}
       ${sec('Dispatch Queue', 'Settled loads', 'Opening settled loads', settled.length, '#finance')}
-      ${open.length ? open.map((l) => loadCard(l, 'supplier')).join('') : banner('ok', 'No open consignments right now.')}
+      ${open.length ? open.map((l) => loadCard(l, 'supplier')).join('') : emptyState({ icon: ICON.truck, title: 'No open consignments', sub: 'When ZVIDA places dispatch orders, your consignment queue will appear here.', action: 'View inventory', actionHref: '#inventory' })}
     `;
     },
   },
@@ -359,6 +379,9 @@ const P = {
   },
 };
 
+void (async () => {
+const session = await resolveDashboardSession('supplier');
+if (!session) return;
 boot({
   key: 'vendor',
   name: 'Vendor',
@@ -372,10 +395,13 @@ boot({
   accentRgb: '13, 148, 136',
   gradientEnd: '#2dd4bf',
   pages: [P.today, P.inventory, P.listings, P.orders, P.dispatch, P.documents, P.finance, P.settings],
+  keepEmpty: ['listings', 'orders', 'settings'],
   navGroups: [
     { label: 'Overview', pages: ['today'] },
     { label: 'Store', pages: ['inventory', 'listings', 'orders'] },
     { label: 'Logistics', pages: ['dispatch', 'documents'] },
     { label: 'Finance & Account', pages: ['finance', 'settings'] },
   ],
+  session,
 });
+})();

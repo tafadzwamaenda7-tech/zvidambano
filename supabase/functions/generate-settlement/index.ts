@@ -1,20 +1,74 @@
 // ============================================================
 // Edge Function: generate-settlement
-// Generates farmer settlement, offtaker invoice, and broker commission
-// when a contract reaches PENDING_SETTLEMENT status
+// Generates farmer settlement, offtaker invoice, and broker commission.
+// Authorization: admin/broker only. Rate limited. Idempotent.
 // ============================================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
 
+const JSON_HEADERS = { "Content-Type": "application/json" }
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: JSON_HEADERS })
+
+async function authenticate(req: Request): Promise<{ user?: any; client?: any; error?: Response }> {
+  const authHeader = req.headers.get("Authorization")
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return { error: json({ error: "Missing or malformed Authorization header" }, 401) }
+  }
+  const client = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } }
+  )
+  const { data, error } = await client.auth.getUser()
+  if (error || !data.user) {
+    return { error: json({ error: "Invalid or expired token" }, 401) }
+  }
+  return { user: data.user, client }
+}
+
+async function isPrivileged(client: any, uid: string): Promise<boolean> {
+  const { data } = await client
+    .from("users")
+    .select("role")
+    .eq("id", uid)
+    .maybeSingle()
+  return !!data && (data.role === "admin" || data.role === "broker")
+}
+
+async function checkRateLimit(supabase: any, bucket: string, limit: number, window: string): Promise<boolean> {
+  const { data: allowed } = await supabase.rpc("rate_limit_check", {
+    p_bucket: bucket,
+    p_limit: limit,
+    p_window: window,
+  })
+  return allowed === true
+}
+
 serve(async (req) => {
   try {
-    const { contract_id } = await req.json()
+    const { user, client, error } = await authenticate(req)
+    if (error) return error
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     )
+
+    if (!(await isPrivileged(client, user.id))) {
+      return json({ error: "Forbidden: requires admin or broker role" }, 403)
+    }
+
+    if (!(await checkRateLimit(supabase, `generate-settlement:${user.id}`, 20, "1 hour"))) {
+      return json({ error: "Rate limit exceeded" }, 429)
+    }
+
+    const { contract_id } = await req.json()
+
+    if (!contract_id) {
+      return json({ error: "contract_id is required" }, 400)
+    }
 
     // Get contract with all details
     const { data: contract, error: contractError } = await supabase
@@ -23,13 +77,34 @@ serve(async (req) => {
       .eq("id", contract_id)
       .single()
 
-    if (contractError) throw contractError
-    if (!contract) throw new Error("Contract not found")
+    if (contractError || !contract) {
+      return json({ error: "Contract not found" }, 404)
+    }
 
-    // Calculate amounts
-    const totalAmount = (contract.quantity || 0) * (contract.offtaker_price || 0)
-    const farmerPayout = (contract.quantity || 0) * (contract.farmer_price || 0)
-    const brokerCommission = (contract.quantity || 0) * (contract.broker_commission || 0)
+    // Idempotency: refuse if a settlement or invoice already exists
+    const { data: existingSettlement } = await supabase
+      .from("farmer_settlements")
+      .select("id")
+      .eq("contract_id", contract_id)
+      .maybeSingle()
+    const { data: existingInvoice } = await supabase
+      .from("offtaker_invoices")
+      .select("id")
+      .eq("contract_id", contract_id)
+      .maybeSingle()
+
+    if (existingSettlement || existingInvoice) {
+      return json({ error: "Settlement already generated for this contract" }, 409)
+    }
+
+    // Calculate amounts — prices are per tonne but quantity is stored in kg,
+    // so convert to tonnes before multiplying (matches the dashboards).
+    const tonnes = (contract.unit || "kg") === "kg"
+      ? (contract.quantity || 0) / 1000
+      : (contract.quantity || 0)
+    const totalAmount = tonnes * (contract.offtaker_price || 0)
+    const farmerPayout = tonnes * (contract.farmer_price || 0)
+    const brokerCommission = tonnes * (contract.broker_commission || 0)
     const spread = totalAmount - farmerPayout - brokerCommission
 
     // Create farmer settlement
@@ -98,7 +173,7 @@ serve(async (req) => {
       await supabase.from("notifications").insert(notifications)
     }
 
-    return new Response(JSON.stringify({
+    return json({
       settlement,
       invoice,
       commission,
@@ -108,13 +183,8 @@ serve(async (req) => {
         broker_commission: brokerCommission,
         spread: spread,
       },
-    }), {
-      headers: { "Content-Type": "application/json" },
     })
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    })
+    return json({ error: error.message }, 400)
   }
 })

@@ -1197,6 +1197,9 @@ export function initAuthUI(): void {
 
 export async function signOutAndRedirect(): Promise<void> {
   const { logout } = await import('./auth');
+  const { getLiveAccount } = await import('./zvida-live');
+  const { broadcastLogout } = await import('./realtime');
+  void broadcastLogout(getLiveAccount()?.id || '');
   try {
     await logout();
   } catch {

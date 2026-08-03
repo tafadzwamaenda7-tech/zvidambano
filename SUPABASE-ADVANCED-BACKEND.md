@@ -1,5 +1,7 @@
 # ZVIDAMBANO — Advanced Backend Issues & Solutions
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 Complete guide covering all remaining backend concerns not covered in previous guides.
 
 ---

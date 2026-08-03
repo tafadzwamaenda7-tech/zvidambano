@@ -1,5 +1,7 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketMyOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, liveUserId, marketAddProduct, marketRemoveProduct, asyncFills, submitBtn, onValidSubmit, formRules, takePendingUpload } from './core';
+import { fetchMyMessages, sendSupportMessage } from '../lib/zvida-live';
 import type { PillTone } from './core';
+import { resolveDashboardSession } from '../lib/session';
 
 wf('f-sched-882', {
   start: {
@@ -7,12 +9,12 @@ wf('f-sched-882', {
     tone: 'indigo',
     nav: '#contracts',
     toast: 'Loading started — ZVIDA notified',
-    meta: 'Driver: <b>John Doe</b> (+263 77 123 4567) · Truck ABC-123 (Scania R450) · Trailer XYZ-789<br/>Contract #882 · 20 tons Maize · Truck en route to Miller Corp',
+    meta: 'Driver: <b>John Doe</b> (+263 77 123 4567) · Truck ABC-123 (Scania R450) · Trailer XYZ-789<br/>Contract #882 · 20 tons Maize · Truck en route to the ZVIDA hub',
     foot: btn('Track Live', 'primary sm', 'Opening live tracking', undefined, 'f-sched-882', 'track') + jsBtn('Call Driver', 'ghost sm', 'callDriver', 'John Doe +263 77 123 4567', 'Dialing John Doe…'),
   },
   track: {
     nav: '#contracts',
-    insert: routeMap('Farm 42 Ruwa', 'Miller Corp Harare', { x: 16, y: 62 }, { x: 76, y: 40 }, 74),
+    insert: routeMap('Farm 42 Ruwa', 'ZVIDA Hub · Harare', { x: 16, y: 62 }, { x: 76, y: 40 }, 74),
     toast: 'Live tracking opened — truck moving at 72 km/h',
   },
 });
@@ -20,7 +22,7 @@ wf('f-sched-882', {
 wf('f-sched-883', {
   track: {
     nav: '#contracts',
-    insert: routeMap('Farm 12 Marondera', 'Miller Corp Harare', { x: 20, y: 66 }, { x: 78, y: 36 }, 46),
+    insert: routeMap('Farm 12 Marondera', 'ZVIDA Hub · Harare', { x: 20, y: 66 }, { x: 78, y: 36 }, 46),
     toast: 'Live tracking opened — ETA 2 hours',
   },
 });
@@ -91,7 +93,61 @@ wf('f-wheat', {
 const LISTINGS: { title: string; thumb: string; badge: string; badgeTone: PillTone; meta: string; foot: string }[] = [];
 
 let LIST_EDIT: null | { kind: 'soya' } = null;
-let SOYA = { qty: '10', reserve: '450' };
+let SOYA: { qty: string; reserve: string; thumb?: string } = { qty: '10', reserve: '450' };
+
+formRules({
+  fCommodity: { req: true, msg: 'Choose the commodity you are selling.' },
+  fQty: { req: true, num: { min: 0.1, max: 5000, step: 0.5 }, msg: 'Enter the tons available (0.1 – 5,000).' },
+  fGrade: { req: true, msg: 'Select a grade.' },
+  fMoist: { num: { min: 0, max: 60 }, msg: 'Moisture must be between 0 and 60%.' },
+  fReserve: { req: true, num: { min: 0.01, max: 100000 }, msg: 'Enter a reserve price per ton.' },
+});
+
+onValidSubmit('f-listing', (form) => {
+  const controls = [...form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.dsh-input, .dsh-select')];
+  const img = takePendingUpload('flist-img');
+  if (isLiveMode()) {
+    const commodity = (controls[0]?.value || 'Maize').trim();
+    const qty = parseFloat(controls[1]?.value || '0') || 0;
+    const reserve = parseFloat(controls[4]?.value || '0') || 0;
+    marketAddProduct({
+      id: 'fp' + Date.now(),
+      name: `${commodity} · ${qty}t · Reserve $${reserve}/t`,
+      category: 'Grain',
+      price: reserve,
+      unit: 't',
+      seller: liveUserName(),
+      stock: qty,
+      rating: 4.5,
+      reviews: 0,
+      thumb: img || (commodity.toLowerCase().includes('soya') ? 'soya' : commodity.toLowerCase().includes('wheat') ? 'wheat' : 'grain'),
+    });
+    toast('Listing submitted — ZVIDA will review it', 'info');
+    window.location.hash = '#today';
+    window.location.hash = '#sell';
+    return;
+  }
+  const ins = [...form.querySelectorAll<HTMLInputElement>('.dsh-input')];
+  if (LIST_EDIT) {
+    SOYA.qty = (ins[0]?.value || '').trim() || SOYA.qty;
+    SOYA.reserve = (ins[2]?.value || '').trim() || SOYA.reserve;
+    if (img) SOYA.thumb = img;
+    LIST_EDIT = null;
+    toast('Listing updated');
+  } else {
+    LISTINGS.unshift({
+      title: 'Maize · 20t · Reserve $200/t',
+      thumb: img || 'grain',
+      badge: 'PENDING APPROVAL',
+      badgeTone: 'amber',
+      meta: 'Submitted just now · Awaiting ZVIDA approval.',
+      foot: `${btn('Withdraw', 'danger sm', 'Listing withdrawn', undefined, 'f-soya-new', 'withdraw')}`,
+    });
+    toast('Listing submitted for approval');
+  }
+  window.location.hash = '#today';
+  window.location.hash = '#sell';
+});
 
 JS.editListing = (_p, el) => {
   LIST_EDIT = { kind: 'soya' };
@@ -106,31 +162,46 @@ JS.cancelEdit = (target) => {
   window.location.hash = cur || `#${target || 'sell'}`;
   toast('Edit cancelled', 'info');
 };
+JS.withdrawListing = (id) => {
+  marketRemoveProduct(id);
+  toast('Listing withdrawn', 'info');
+};
+
+onValidSubmit('support-form', (form) => {
+  const c = [...form.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('.dsh-input, .dsh-select, .dsh-textarea')];
+  const subject = (c[0]?.value || 'General').trim();
+  const priority = (c[1]?.value || 'Low').trim();
+  const body = (c[2]?.value || '').trim();
+  if (!isLiveMode()) {
+    toast('Ticket submitted — we reply within 24h');
+    return;
+  }
+  void sendSupportMessage(`[${priority}] ${subject}: ${body}`.trim()).then((ok) => {
+    if (ok) {
+      toast('Ticket submitted — we reply within 24h');
+      window.location.hash = '#today';
+      window.location.hash = '#messages';
+    } else {
+      toast('Could not reach support right now', 'warn');
+    }
+  });
+});
+
+asyncFills['farmer-chat'] = async () => {
+  const msgs = await fetchMyMessages();
+  if (!msgs.length) return emptyState({ icon: ICON.messages, title: 'No messages yet', sub: 'Send a ticket above — ZVIDA support replies here.' });
+  const me = liveUserId();
+  const bubbles = msgs.map((m) => {
+    const sent = m.senderId === me;
+    const t = new Date(m.createdAt);
+    const time = isNaN(t.getTime()) ? '' : t.toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return `<div class="dsh-bubble ${sent ? 'sent' : 'recv'}">${m.body}${time ? `<span class="t">${time}</span>` : ''}</div>`;
+  }).join('');
+  return panel({ body: `<div class="dsh-chat-body" style="max-height:340px;overflow:auto">${bubbles}</div>`, flush: true });
+};
 
 JS.callDriver = (who) => {
   toast(`Dialing ${who} — placing the call from your phone`, 'info');
-};
-JS.submitListing = () => {
-  if (LIST_EDIT) {
-    const ins = document.querySelectorAll<HTMLInputElement>('.dsh-input');
-    SOYA.qty = (ins[0]?.value || SOYA.qty).trim() || SOYA.qty;
-    SOYA.reserve = (ins[2]?.value || SOYA.reserve).trim() || SOYA.reserve;
-    LIST_EDIT = null;
-    window.location.hash = '#today';
-    window.location.hash = '#sell';
-    toast('Listing updated');
-    return;
-  }
-  LISTINGS.unshift({
-    title: 'Maize · 20t · Reserve $200/t',
-    thumb: 'grain',
-    badge: 'PENDING APPROVAL',
-    badgeTone: 'amber',
-    meta: 'Submitted just now · Awaiting ZVIDA approval.',
-    foot: `${btn('Withdraw', 'danger sm', 'Listing withdrawn', undefined, 'f-soya-new', 'withdraw')}`,
-  });
-  toast('Listing submitted for approval');
-  window.location.hash = '#sell';
 };
 JS.dlAll = () => {
   ['inv-882', 'rcpt-882', 'inv-880', 'rcpt-880', 'cert-882', 'wb-882'].forEach((k) => downloadNow(k));
@@ -164,11 +235,12 @@ JS.voicePlay = () => {
 };
 JS.submitTicket = () => {
   const b = document.querySelector('[data-js="submitTicket"]') as HTMLButtonElement | null;
+  const img = takePendingUpload('ticket-img');
   if (b) {
     b.textContent = 'Submitted';
     b.disabled = true;
   }
-  toast('Ticket #T-104 submitted — we reply within 24h');
+  toast(img ? 'Ticket #T-104 submitted with screenshot — we reply within 24h' : 'Ticket #T-104 submitted — we reply within 24h');
 };
 JS.openGallery = (key) => {
   const names: Record<string, string> = {
@@ -240,6 +312,7 @@ const P = {
         kick: 'Friday, 31 July 2026',
         title: 'Good morning, James',
         sub: 'Your maize load arrives at 08:00. Track deliveries, release payments and manage your silo — all in one place.',
+        status: { label: 'Market open', tone: 'live' },
         actions: `${btn('List Produce', 'onlight', 'Opening new listing form', '#sell')}${btn('Contact ZVIDA', 'onlight', 'Opening chat with ZVIDA', '#messages')}`,
         bg: 'dash/hero-farm.jpg',
         stats: [
@@ -347,56 +420,26 @@ const P = {
     icon: ICON.sell,
     title: 'Sell',
     sub: 'Virtual silo & listings',
-    render: () => `
-      ${sec('My Stock (Virtual Silo)')}
-      ${panel({
-        body: `
-          <div style="display:flex;align-items:center;gap:26px;flex-wrap:wrap">
-            ${ring(60, '30 t', 88)}
-            <div style="flex:1;min-width:240px">
-              <div style="font-size:15px;font-weight:750;letter-spacing:-0.01em;margin-bottom:4px">Maize — 30 tons remaining</div>
-              <div style="font-size:13px;color:var(--dsh-text-2);margin-bottom:12px">50t total − 20t sold. You have 30 tons available to list.</div>
-              ${steps(3, 5, 'Committed against active contracts')}
-            </div>
-            ${pill('List now', 'green')}
-          </div>`,
-      })}
-      ${split(`
-        ${sec('Create New Listing')}
-        ${panel({
-          title: 'New listing',
-          icon: ICON.plus,
-          body: `
-            ${field('Commodity', select(['Maize', 'Soya', 'Wheat', 'Groundnuts', 'Livestock'], LIST_EDIT ? 1 : 0))}
-            <div class="dsh-field-grid">
-              ${field('Quantity (tons)', input(LIST_EDIT ? SOYA.qty : '20.0'))}
-              ${field('Grade', select(['Grade A', 'Grade B', 'Grade C']))}
-            </div>
-            <div class="dsh-field-grid">
-              ${field('Moisture %', input('14.5'))}
-              ${field('Reserve Price ($/t)', input(LIST_EDIT ? SOYA.reserve : '200.00'))}
-            </div>
-            ${LIST_EDIT ? banner('ok', `Editing your <b>Soya</b> listing — update and save.`) : banner('info', 'ZVIDA is currently offering <b>$295/t</b> for Maize.')}
-            ${field('Collection type', `
-              <div class="dsh-radio-row">
-                <label class="dsh-radio"><input type="radio" name="collection" checked /> COD — I deliver to ZVIDA</label>
-                <label class="dsh-radio"><input type="radio" name="collection" /> COC — ZVIDA collects from farm</label>
-              </div>`)}
-            <div class="dsh-btn-row" style="justify-content:space-between">
-              ${uploadBtn('Upload photo', 'ghost sm', 'image/*')}
-              <span>
-                ${LIST_EDIT ? jsBtn('Cancel', 'ghost', 'cancelEdit', 'sell', 'Edit cancelled') : ''}
-                ${jsBtn(LIST_EDIT ? 'Save Changes' : 'Submit Listing', 'primary', 'submitListing', '', LIST_EDIT ? 'Listing updated' : 'Listing submitted for approval')}
-              </span>
-            </div>`,
-        })}
-      `, `
-        ${sec('My Active Listings')}
-        ${LISTINGS.map((l) => itemCard({ title: l.title, thumb: l.thumb, badge: l.badge, badgeTone: l.badgeTone, time: l.meta, open: '#sell', foot: l.foot })).join('')}
+    render: () => {
+      const live = isLiveMode();
+      const my = live ? marketCatalog(liveUserName()) : [];
+      const activeCards = live
+        ? (my.length
+            ? my.map((p) => itemCard({
+                title: p.name,
+                thumb: p.thumb || 'grain',
+                badge: 'ACTIVE',
+                badgeTone: 'green',
+                open: '#sell',
+                meta: `$${p.price}/${p.unit} · ${p.stock}${p.unit} available · Viewable by ZVIDA.`,
+                foot: `${jsBtn('Withdraw', 'danger sm', 'withdrawListing', p.id, 'Listing withdrawn')}`,
+              })).join('')
+            : emptyState({ icon: ICON.sell, title: 'No active listings yet', sub: 'Submit a listing above — ZVIDA reviews it, then matches it to buyers.', action: 'Create a listing', actionHref: '#sell' }))
+        : `${LISTINGS.map((l) => itemCard({ title: l.title, thumb: l.thumb, badge: l.badge, badgeTone: l.badgeTone, time: l.meta, open: '#sell', foot: l.foot })).join('')}
         ${itemCard({
           key: 'soya',
           title: `Soya · ${SOYA.qty}t · Reserve $${SOYA.reserve}/t`,
-          thumb: 'soya',
+          thumb: SOYA.thumb || 'soya',
           badge: 'ACTIVE',
           badgeTone: 'green',
           open: '#sell',
@@ -411,9 +454,58 @@ const P = {
           open: '#sell',
           meta: 'ZVIDA counter-offer: <b>$370/t</b>',
           foot: `${btn('Accept', 'success sm', 'Counter-offer accepted', undefined, 'f-wheat', 'accept')}${btn('Counter', 'outline sm', 'Sending counter-offer', undefined, 'f-wheat', 'counter')}${btn('Decline', 'danger sm', 'Counter-offer declined', undefined, 'f-wheat', 'decline')}`,
+        })}`;
+      return `
+      ${live ? '' : `${sec('My Stock (Virtual Silo)')}
+      ${panel({
+        body: `
+          <div style="display:flex;align-items:center;gap:26px;flex-wrap:wrap">
+            ${ring(60, '30 t', 88)}
+            <div style="flex:1;min-width:240px">
+              <div style="font-size:15px;font-weight:750;letter-spacing:-0.01em;margin-bottom:4px">Maize — 30 tons remaining</div>
+              <div style="font-size:13px;color:var(--dsh-text-2);margin-bottom:12px">50t total − 20t sold. You have 30 tons available to list.</div>
+              ${steps(3, 5, 'Committed against active contracts')}
+            </div>
+            ${pill('List now', 'green')}
+          </div>`,
+      })}`}
+      ${split(`
+        ${sec('Create New Listing')}
+        ${panel({
+          title: 'New listing',
+          icon: ICON.plus,
+          body: `
+            <div data-form>
+            ${field('Commodity', select(['Maize', 'Soya', 'Wheat', 'Groundnuts', 'Livestock'], LIST_EDIT ? 1 : -1, { val: 'fCommodity', ph: true }))}
+            <div class="dsh-field-grid">
+              ${field('Quantity (tons)', input(LIST_EDIT ? SOYA.qty : undefined, 'e.g. 20.0', { val: 'fQty', type: 'number', min: '0', step: '0.5' }))}
+              ${field('Grade', select(['Grade A', 'Grade B', 'Grade C'], -1, { val: 'fGrade', ph: true }))}
+            </div>
+            <div class="dsh-field-grid">
+              ${field('Moisture %', input('14.5', undefined, { val: 'fMoist', type: 'number', min: '0', step: '0.1' }))}
+              ${field('Reserve Price ($/t)', input(LIST_EDIT ? SOYA.reserve : '200.00', undefined, { val: 'fReserve', type: 'number', min: '0', step: '1' }))}
+            </div>
+            ${LIST_EDIT ? banner('ok', `Editing your <b>Soya</b> listing — update and save.`) : banner('info', live ? 'ZVIDA reviews every listing before matching it to buyers.' : 'ZVIDA is currently offering <b>$295/t</b> for Maize.')}
+            ${field('Collection type', `
+              <div class="dsh-radio-row">
+                <label class="dsh-radio"><input type="radio" name="collection" checked /> COD — I deliver to ZVIDA</label>
+                <label class="dsh-radio"><input type="radio" name="collection" /> COC — ZVIDA collects from farm</label>
+              </div>`)}
+            <div class="dsh-btn-row" style="justify-content:space-between">
+              ${uploadBtn('Upload photo', 'ghost sm', 'image/*', { bucket: 'listing-photos', key: 'flist-img' })}
+              <span>
+                ${LIST_EDIT ? jsBtn('Cancel', 'ghost', 'cancelEdit', 'sell', 'Edit cancelled') : ''}
+                ${submitBtn(LIST_EDIT ? 'Save Changes' : 'Submit Listing', 'primary', 'f-listing')}
+              </span>
+            </div>
+            </div>`,
         })}
+      `, `
+        ${sec('My Active Listings')}
+        ${activeCards}
       `)}
-    `,
+    `;
+    },
   },
   shop: {
     id: 'shop',
@@ -435,10 +527,10 @@ const P = {
       </div>
       ${sec('Input Store', marketQty() > 0 ? `Cart (${marketQty()})` : 'Cart', 'Opening cart', undefined, '#cart')}
       ${field('Search', `<input class="dsh-input dsh-search2" data-mkt-search placeholder="Search inputs, categories…" />`)}
-      ${chips(['All', 'Fertilizer', 'Seeds', 'Chemicals', 'Stockfeed', 'Livestock', 'Equipment'], 0, 'shop')}
-      <div class="dsh-shop-grid">
+      ${chips(['All', 'Grain', 'Fertilizer', 'Seeds', 'Chemicals', 'Stockfeed', 'Livestock', 'Equipment'], 0, 'shop')}
+      ${marketCatalog().length ? `<div class="dsh-shop-grid">
         ${marketCatalog().map((p) => marketProductCard(p, 'shop')).join('')}
-      </div>
+      </div>` : emptyState({ icon: ICON.shop, title: 'No products in the store yet', sub: 'The full ZVIDA range — grains and inputs — is always available here, alongside vendor listings.', action: 'Notify me', actionToast: 'We will alert you when new products are listed' })}
       <div style="font-size:12px;color:var(--dsh-text-3);margin-top:18px">Every input is supplied and verified by ZVIDA. Your own grain listings are hidden here — manage them under Sell.</div>
     `,
   },
@@ -451,18 +543,20 @@ const P = {
     hidden: true,
     render: () => {
       const lines = marketCartLines();
+      const live = isLiveMode();
       const cards =
         lines.length === 0
           ? `${panel({ title: 'Your cart is empty', icon: ICON.shop, body: banner('info', 'Add inputs from the shop — they will appear here.', 'Continue shopping', 'Opening the input store', '#shop') })}`
           : lines.map((it) => marketCartLine(it)).join('');
       const subtotal = marketSubtotal();
       const total = subtotal + 12;
-      return `
-      ${kpis([
+      const kpisArr: { label: string; value: string | number; icon: string; delta: string; up: boolean; spark: number[]; foot: string; open: string }[] = [
         { label: 'Items', value: marketQty(), icon: ICON.shop, delta: 'Supplied by ZVIDA', up: true, spark: [1, 2, 2, 3, 2, 3, 3], foot: 'Across 3 stores', open: '#shop' },
         { label: 'Subtotal', value: marketMoney(subtotal), icon: ICON.wallet, delta: 'Input costs', up: true, spark: [20, 30, 40, 60, 80, 100, 120], foot: 'Before delivery', open: '#checkout' },
-        { label: 'Available Credit', value: '$50,000', icon: ICON.finance, delta: 'Line of credit', up: true, spark: [40, 40, 42, 42, 44, 44, 50], foot: 'Against warehouse receipts', open: '#finance' },
-      ])}
+      ];
+      if (!live) kpisArr.push({ label: 'Available Credit', value: '$50,000', icon: ICON.finance, delta: 'Line of credit', up: true, spark: [40, 40, 42, 42, 44, 44, 50], foot: 'Against warehouse receipts', open: '#finance' });
+      return `
+      ${kpis(kpisArr)}
       ${split(`
         ${sec('Cart Items')}
         ${panel({ body: cards, pad: '4px 20px 10px' })}
@@ -480,7 +574,7 @@ const P = {
               { label: 'Delivery', value: '$12.00' },
               { label: 'Total', value: marketMoney(total) },
             ])}
-            ${banner('ok', 'Delivery to Farm 42, Ruwa by <b>Saturday</b>. Handled by ZVIDA, start to finish.')}
+            ${banner('ok', live ? 'Delivery arranged by ZVIDA once you confirm checkout.' : 'Delivery to Farm 42, Ruwa by <b>Saturday</b>. Handled by ZVIDA, start to finish.')}
             <div class="dsh-btn-row full">${btn('Proceed to Checkout', 'primary', 'Opening checkout', '#checkout')}</div>`,
         })}
       `)}
@@ -494,18 +588,21 @@ const P = {
     title: 'Checkout',
     sub: 'Delivery & payment',
     hidden: true,
-    render: () => `
+    render: () => {
+      const live = isLiveMode();
+      const walletChip = live ? 'ZVIDA Wallet' : 'ZVIDA Wallet (Balance $8,940)';
+      return `
       <div class="dsh-checkout">
       ${sec('Delivery Address')}
       ${panel({
         body: `
           <div class="dsh-field-grid">
-            ${field('Full name', input('James'))}
-            ${field('Phone', input('+263 77 555 0011'))}
+            ${field('Full name', input(live ? '' : 'James', live ? 'Full name' : undefined))}
+            ${field('Phone', input(live ? '' : '+263 77 555 0011', live ? '+263 7X XXX XXXX' : undefined))}
           </div>
           <div class="dsh-field-grid">
-            ${field('Street / Farm', input('Farm 42, Ruwa'))}
-            ${field('City / Province', input('Harare'))}
+            ${field('Street / Farm', input(live ? '' : 'Farm 42, Ruwa', live ? 'Farm / street address' : undefined))}
+            ${field('City / Province', input(live ? '' : 'Harare', live ? 'City / province' : undefined))}
           </div>`,
       })}
       ${sec('Delivery Speed')}
@@ -526,8 +623,8 @@ const P = {
         ${sec('Payment Method')}
         ${panel({
           body: `
-            ${chips(['ZVIDA Wallet (Balance $8,940)', 'Input Loan Credit', 'EcoCash'], 0, 'pay')}
-            <div data-filter-group="pay" data-filter-value="ZVIDA Wallet (Balance $8,940)">
+            ${chips([walletChip, 'Input Loan Credit', 'EcoCash'], 0, 'pay')}
+            <div data-filter-group="pay" data-filter-value="${walletChip}">
               ${banner('ok', 'Paid instantly from your wallet. No extra fees.')}
             </div>
             <div data-filter-group="pay" data-filter-value="Input Loan Credit" style="display:none">
@@ -551,7 +648,8 @@ const P = {
         })}
       `)}
       </div>
-    `,
+    `;
+    },
   },
   'order-confirmed': {
     id: 'order-confirmed',
@@ -592,7 +690,7 @@ const P = {
     title: 'My Orders',
     sub: 'Track and reorder',
     render: () => {
-      const orders = marketOrders().filter((o) => o.buyer.startsWith('James') || o.buyer === 'James (Farmer)');
+      const orders = marketMyOrders();
       const active = orders.filter((o) => !['DELIVERED', 'CANCELLED', 'ESCALATED'].includes(o.status)).length;
       return `
       ${banner('info', `${active} active ${active === 1 ? 'order' : 'orders'} in progress. ZVIDA confirms within 24 hours.`, 'Go shopping', 'Opening the input store', '#shop')}
@@ -610,11 +708,12 @@ const P = {
     title: 'Contracts',
     sub: 'Live loads & payments',
     render: () => {
-      const mine = loadCatalog().filter((l) => l.supplier.startsWith('James'));
+      const mine = isLiveMode() ? loadCatalog() : loadCatalog().filter((l) => l.supplier.startsWith('James'));
       const open = mine.filter((l) => !['PAID', 'CANCELLED'].includes(l.status));
       const pendingPay = mine.filter((l) => l.status === 'PENDING_PAYMENT');
       const settled = mine.filter((l) => l.status === 'PAID');
       const payout = pendingPay.reduce((s, l) => s + l.amount, 0);
+      const settledRows = settled.map((l) => [l.ref, l.commodity, marketMoney(l.amount), l.due || 'Paid']);
       return `
       ${kpis([
         { label: 'Active Loads', value: open.length, icon: ICON.truck, delta: 'In motion', up: true, spark: [1, 2, 2, 1, 2, 3, Math.max(open.length, 1)], foot: 'Your consignments', open: '#contracts' },
@@ -623,16 +722,17 @@ const P = {
       ])}
       ${banner('info', 'Record the first weighbridge weight (or the scale bucket count) to push the load forward. ZVIDA pays into your wallet after delivery — COD, COC or NET terms.')}
       ${sec('My Consignments', 'Settled history', 'Opening settled loads', settled.length, '#contracts')}
-      ${open.length ? open.map((l) => loadCard(l, 'supplier')).join('') : banner('ok', 'No open consignments — check back after harvest.')}
+      ${open.length ? open.map((l) => loadCard(l, 'supplier')).join('') : emptyState({ icon: ICON.truck, title: 'No open consignments', sub: 'Once ZVIDA issues a contract for your harvest, the load pipeline and weighbridge steps will appear here.', action: 'Create a listing', actionHref: '#sell' })}
       ${sec('Completed Deals')}
-      ${panel({
-        body: table(['Contract', 'Commodity', 'Amount', 'Paid'], [
-          ['#880', 'Maize', '$4,000', 'Jul 15, 2026'],
-          ['#879', 'Soya', '$3,600', 'Jul 12, 2026'],
-          ['#878', 'Maize', '$2,450', 'Jul 10, 2026'],
-        ], [2], ['#finance', '#finance', '#finance']),
-        flush: true,
-      })}
+      ${isLiveMode()
+        ? (settled.length
+            ? panel({ body: table(['Contract', 'Commodity', 'Amount', 'Paid'], settledRows, [2], ['#contracts', '#contracts', '#contracts']), flush: true })
+            : emptyState({ icon: ICON.check, title: 'No completed deals yet', sub: 'Once a contract is fully paid it will appear in your completed history.' }))
+        : panel({ body: table(['Contract', 'Commodity', 'Amount', 'Paid'], [
+            ['#880', 'Maize', '$4,000', 'Jul 15, 2026'],
+            ['#879', 'Soya', '$3,600', 'Jul 12, 2026'],
+            ['#878', 'Maize', '$2,450', 'Jul 10, 2026'],
+          ], [2], ['#finance', '#finance', '#finance']), flush: true })}
     `;
     },
   },
@@ -759,8 +859,8 @@ const P = {
           title: 'Deal Ratings',
           icon: ICON.quality,
           body: `
-            ${listRow(ICON.quality, 'Miller Corp', '12 loads · Always on time', '5.0', 'pos')}
-            ${listRow(ICON.quality, 'GrainCorp', '8 loads · Great moisture', '4.8', 'pos')}`,
+            ${listRow(ICON.quality, 'ZVIDA Agro Traders', '12 loads · Always on time', '5.0', 'pos')}
+            ${listRow(ICON.quality, 'ZVIDA Agro Traders', '8 loads · Great moisture', '4.8', 'pos')}`,
         })}
       `)}
     `,
@@ -813,7 +913,24 @@ const P = {
     icon: ICON.messages,
     title: 'Messages',
     sub: 'Chat & support',
-    render: () => `
+    render: () => isLiveMode() ? `
+      ${sec('Support — Chat & Tickets')}
+      ${panel({
+        title: 'Open a support ticket',
+        icon: ICON.messages,
+        body: `
+          <div data-form>
+          <div class="dsh-field-grid">
+            ${field('Subject', input(undefined, 'What is the issue?'))}
+            ${field('Priority', select(['Low', 'Medium', 'High', 'Urgent']))}
+          </div>
+          ${field('Message', textarea(3, 'Describe your problem…'))}
+          <div class="dsh-btn-row">${uploadBtn('Attach screenshot', 'ghost sm', 'image/*', { bucket: 'documents', key: 'ticket-img' })}${submitBtn('Submit Ticket', 'primary', 'support-form')}</div>
+          </div>`,
+      })}
+      ${sec('Your messages')}
+      <div data-async="farmer-chat"></div>
+    ` : `
       ${chat(
         { name: 'Contract #882 · Maize', preview: 'Truck #12 arrives 08:00', time: 'Today' },
         [
@@ -848,12 +965,14 @@ const P = {
             ${field('Priority', select(['Low', 'Medium', 'High', 'Urgent']))}
           </div>
           ${field('Message', textarea(3, 'Describe your problem…'))}
-          <div class="dsh-btn-row">${uploadBtn('Attach screenshot', 'ghost sm', 'image/*')}${jsBtn('Submit Ticket', 'primary', 'submitTicket', '', 'Ticket #T-104 submitted — we reply within 24h')}</div>`,
-      })}
-    `,
+          <div class="dsh-btn-row">${uploadBtn('Attach screenshot', 'ghost sm', 'image/*', { bucket: 'documents', key: 'ticket-img' })}${jsBtn('Submit Ticket', 'primary', 'submitTicket', '', 'Ticket #T-104 submitted — we reply within 24h')}</div>`,
+      })}`,
   },
 };
 
+void (async () => {
+const session = await resolveDashboardSession('farmer');
+if (!session) return;
 boot({
   key: 'farmer',
   name: 'James',
@@ -867,10 +986,13 @@ boot({
   accentRgb: '5, 150, 105',
   gradientEnd: '#10b981',
   pages: [P.today, P.sell, P.shop, P.orders, P.cart, P.checkout, P['order-confirmed'], P.contracts, P.documents, P.finance, P.perf, P.farm, P.messages],
+  keepEmpty: ['shop', 'cart', 'checkout', 'order-confirmed', 'orders', 'sell', 'messages'],
   navGroups: [
     { label: 'Overview', pages: ['today', 'sell', 'shop', 'orders'] },
     { label: 'Contracts', pages: ['contracts', 'finance'] },
     { label: 'My Farm', pages: ['farm', 'perf'] },
     { label: 'Account', pages: ['documents', 'messages'] },
   ],
+  session,
 });
+})();

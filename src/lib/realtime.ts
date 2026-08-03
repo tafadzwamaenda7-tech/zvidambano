@@ -1,235 +1,158 @@
 /**
- * Real-Time Subscriptions Manager
- * Subscribes to Supabase changes and emits events through the event bus
+ * Realtime — live channels for real accounts.
+ *
+ * Only non-demo, signed-in accounts subscribe. Postgres realtime applies RLS,
+ * so each subscriber only receives changes to rows they are allowed to SELECT.
+ *
+ * Three kinds of channel:
+ *
+ * 1. Table changes (`postgres_changes`) — debounced per burst and handed to the
+ *    dashboard as the deduplicated set of tables that changed, so it re-hydrates
+ *    only the stores those tables feed.
+ * 2. Presence (`presence-<userId>`) — tracks how many devices/tabs this user
+ *    has online, which also doubles as a connection-health signal.
+ * 3. Broadcast — a per-user channel (`broadcast-<userId>`) that delivers a
+ *    force-logout to every other device of the same account, and a shared
+ *    channel (`zvida-announce`) that carries admin announcements to everyone.
  */
 
 import { supabase } from './supabase';
-import { eventBus, Events } from './event-bus';
-import { getCurrentUser } from './supabase';
+import type { RealtimeChannel } from '@supabase/supabase-js';
+import { getLiveAccount } from './zvida-live';
 
-let subscriptions: { [key: string]: any } = {};
+const ROLE_TABLES: Record<string, string[]> = {
+  farmer: ['contracts', 'deliveries', 'market_orders', 'notifications', 'listings'],
+  offtaker: ['contracts', 'deliveries', 'market_orders', 'listings', 'notifications'],
+  supplier: ['listings', 'market_orders', 'notifications'],
+  driver: ['deliveries', 'contracts', 'notifications'],
+  broker: ['listings', 'contracts', 'deliveries', 'payments', 'market_orders', 'notifications'],
+  admin: ['listings', 'contracts', 'deliveries', 'payments', 'market_orders', 'notifications'],
+  compliance: ['listings', 'contracts', 'deliveries', 'payments', 'market_orders', 'notifications'],
+  support: ['notifications'],
+};
+
+export interface LiveChannelHandlers {
+  /** Called with the deduplicated set of tables changed since the last flush. */
+  onTables: (tables: string[]) => void;
+  /** Admin announcement received on the shared channel. */
+  onAnnounce?: (title: string, body?: string) => void;
+  /** Number of devices/tabs this account has online right now. */
+  onPresence?: (count: number) => void;
+  /** Another device of this account signed out; this device should too. */
+  onForceLogout?: () => void;
+}
 
 /**
- * Subscribe to listing changes using RealtimeChannel
+ * Start live subscriptions for the current account. Returns a stop function.
  */
-export async function subscribeToListings() {
-  if (subscriptions['listings']) return;
+export function startRealtime(h: LiveChannelHandlers): () => void {
+  const acc = getLiveAccount();
+  if (!acc || acc.isDemo) return () => {};
 
-  console.log('[Realtime] Subscribing to listings...');
+  const channels: RealtimeChannel[] = [];
+  const pending = new Set<string>();
+  let timer: number | undefined;
 
-  const channel = supabase.channel('listings:all').on(
-    'postgres_changes',
-    {
-      event: '*',
-      schema: 'public',
-      table: 'listings',
-    },
-    (payload: any) => {
-      console.log('[Realtime] Listing event:', payload.eventType, payload.new);
+  const flush = () => {
+    if (!pending.size) return;
+    const touched = [...pending];
+    pending.clear();
+    h.onTables(touched);
+  };
 
-      if (payload.eventType === 'INSERT') {
-        Events.listingCreated(payload.new);
-      } else if (payload.eventType === 'UPDATE') {
-        Events.listingUpdated(payload.new);
-      } else if (payload.eventType === 'DELETE') {
-        Events.listingDeleted(payload.old);
+  /* 1. Table changes (debounced) */
+  const tables = ROLE_TABLES[acc.role] || [];
+  for (const t of tables) {
+    const ch = supabase
+      .channel(`live-${acc.id}-${t}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: t }, () => {
+        pending.add(t);
+        window.clearTimeout(timer);
+        timer = window.setTimeout(flush, 350);
+      })
+      .subscribe();
+    channels.push(ch);
+  }
+
+  /* 2. Presence — this account's devices/tabs online */
+  const presence = supabase.channel(`presence-${acc.id}`);
+  presence
+    .on('presence', { event: 'sync' }, () => {
+      h.onPresence?.(Object.keys(presence.presenceState()).length);
+    })
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        void presence.track({ user: acc.id, name: acc.name, role: acc.role, online_at: new Date().toISOString() });
       }
-    }
-  );
+    });
+  channels.push(presence);
 
-  await channel.subscribe();
-  subscriptions['listings'] = channel;
+  /* 3a. Broadcast — force logout of this account from every other device */
+  const logoutCh = supabase.channel(`broadcast-${acc.id}`);
+  logoutCh
+    .on('broadcast', { event: 'force-logout' }, (payload) => {
+      if ((payload as { user?: string }).user === acc.id) h.onForceLogout?.();
+    })
+    .subscribe();
+  channels.push(logoutCh);
+
+  /* 3b. Broadcast — admin announcements to everyone */
+  const announceCh = supabase.channel('zvida-announce');
+  announceCh
+    .on('broadcast', { event: 'announce' }, (payload) => {
+      const a = payload as { title?: string; body?: string };
+      if (a.title) h.onAnnounce?.(a.title, a.body);
+    })
+    .subscribe();
+  channels.push(announceCh);
+
+  return () => {
+    window.clearTimeout(timer);
+    pending.clear();
+    channels.forEach((c) => void supabase.removeChannel(c));
+  };
 }
 
 /**
- * Subscribe to contract changes using RealtimeChannel
+ * Ask every other device of this account to sign out (sent before this device
+ * signs itself out, while the JWT is still valid).
  */
-export async function subscribeToContracts() {
-  if (subscriptions['contracts']) return;
-
-  console.log('[Realtime] Subscribing to contracts...');
-
-  const channel = supabase.channel('contracts:all').on(
-    'postgres_changes',
-    {
-      event: '*',
-      schema: 'public',
-      table: 'contracts',
-    },
-    (payload: any) => {
-      console.log('[Realtime] Contract event:', payload.eventType, payload.new);
-
-      if (payload.eventType === 'INSERT') {
-        Events.contractCreated(payload.new);
-      } else if (payload.eventType === 'UPDATE') {
-        const contract = payload.new;
-        Events.contractUpdated(contract);
-
-        // Also emit specific status change event
-        if (payload.old?.status !== contract.status) {
-          Events.contractStatusChanged({
-            id: contract.id,
-            oldStatus: payload.old?.status,
-            newStatus: contract.status,
-            contract,
-          });
-        }
-      }
-    }
-  );
-
-  await channel.subscribe();
-  subscriptions['contracts'] = channel;
-}
-
-/**
- * Subscribe to delivery changes using RealtimeChannel
- */
-export async function subscribeToDeliveries() {
-  if (subscriptions['deliveries']) return;
-
-  console.log('[Realtime] Subscribing to deliveries...');
-
-  const channel = supabase.channel('deliveries:all').on(
-    'postgres_changes',
-    {
-      event: '*',
-      schema: 'public',
-      table: 'deliveries',
-    },
-    (payload: any) => {
-      console.log('[Realtime] Delivery event:', payload.eventType, payload.new);
-
-      if (payload.eventType === 'INSERT') {
-        Events.deliveryCreated(payload.new);
-      } else if (payload.eventType === 'UPDATE') {
-        const delivery = payload.new;
-        Events.deliveryUpdated(delivery);
-
-        if (payload.old?.status !== delivery.status) {
-          Events.deliveryStatusChanged({
-            id: delivery.id,
-            oldStatus: payload.old?.status,
-            newStatus: delivery.status,
-            delivery,
-          });
-        }
-      }
-    }
-  );
-
-  await channel.subscribe();
-  subscriptions['deliveries'] = channel;
-}
-
-/**
- * Subscribe to payment changes using RealtimeChannel
- */
-export async function subscribeToPayments() {
-  if (subscriptions['payments']) return;
-
-  console.log('[Realtime] Subscribing to payments...');
-
-  const channel = supabase.channel('payments:all').on(
-    'postgres_changes',
-    {
-      event: '*',
-      schema: 'public',
-      table: 'payments',
-    },
-    (payload: any) => {
-      console.log('[Realtime] Payment event:', payload.eventType, payload.new);
-
-      if (payload.eventType === 'INSERT') {
-        Events.paymentCreated(payload.new);
-      } else if (payload.eventType === 'UPDATE') {
-        const payment = payload.new;
-        Events.paymentUpdated(payment);
-
-        if (payload.old?.status !== payment.status) {
-          Events.paymentStatusChanged({
-            id: payment.id,
-            oldStatus: payload.old?.status,
-            newStatus: payment.status,
-            payment,
-          });
-        }
-      }
-    }
-  );
-
-  await channel.subscribe();
-  subscriptions['payments'] = channel;
-}
-
-/**
- * Subscribe to notifications for current user using RealtimeChannel
- */
-export async function subscribeToNotifications() {
-  if (subscriptions['notifications']) return;
-
-  const user = await getCurrentUser();
-  if (!user) return;
-
-  console.log('[Realtime] Subscribing to notifications...');
-
-  const channel = supabase.channel(`notifications:${user.id}`).on(
-    'postgres_changes',
-    {
-      event: 'INSERT',
-      schema: 'public',
-      table: 'notifications',
-      filter: `user_id=eq.${user.id}`,
-    },
-    (payload: any) => {
-      console.log('[Realtime] New notification:', payload.new);
-      Events.notificationNew(payload.new);
-    }
-  );
-
-  await channel.subscribe();
-  subscriptions['notifications'] = channel;
-}
-
-/**
- * Initialize all real-time subscriptions
- */
-export async function initializeRealtimeSubscriptions() {
+export async function broadcastLogout(userId: string): Promise<void> {
+  const acc = getLiveAccount();
+  if (!userId || !acc || acc.isDemo) return;
   try {
-    console.log('[Realtime] Initializing all subscriptions...');
-
-    await Promise.all([
-      subscribeToListings(),
-      subscribeToContracts(),
-      subscribeToDeliveries(),
-      subscribeToPayments(),
-      subscribeToNotifications(),
-    ]);
-
-    console.log('[Realtime] All subscriptions initialized');
-  } catch (error) {
-    console.error('[Realtime] Error initializing subscriptions:', error);
+    const ch = supabase.channel(`broadcast-${userId}`);
+    await ch.subscribe();
+    await ch.send({ type: 'broadcast', event: 'force-logout', payload: { user: userId } });
+    await supabase.removeChannel(ch);
+  } catch {
+    /* ignore */
   }
 }
 
 /**
- * Unsubscribe from a specific channel
+ * Send an admin announcement to every subscribed dashboard.
  */
-export function unsubscribe(channel: string) {
-  if (subscriptions[channel]) {
-    subscriptions[channel].unsubscribe();
-    delete subscriptions[channel];
-    console.log(`[Realtime] Unsubscribed from ${channel}`);
+export async function broadcastAnnounce(title: string, body?: string): Promise<void> {
+  const acc = getLiveAccount();
+  if (!acc || acc.isDemo) return;
+  try {
+    const ch = supabase.channel('zvida-announce');
+    await ch.subscribe();
+    await ch.send({ type: 'broadcast', event: 'announce', payload: { title, body } });
+    await supabase.removeChannel(ch);
+  } catch {
+    /* ignore */
   }
 }
 
 /**
- * Unsubscribe from all channels
+ * Legacy entry point used by main.ts and dashboard-init.ts. Realtime is now
+ * started per-dashboard via startRealtime(); this resolves without subscribing
+ * so old callers keep working.
  */
-export function unsubscribeAll() {
-  Object.keys(subscriptions).forEach((key) => {
-    subscriptions[key].unsubscribe();
-  });
-  subscriptions = {};
-  console.log('[Realtime] Unsubscribed from all channels');
+export async function initializeRealtimeSubscriptions(): Promise<void> {
+  const acc = getLiveAccount();
+  if (!acc || acc.isDemo) return;
+  startRealtime({ onTables: () => {} });
 }

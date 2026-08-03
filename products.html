@@ -150,6 +150,74 @@
     </div>
   </footer>
 
+  <div class="ds-overlay" id="order-modal" role="dialog" aria-modal="true" aria-labelledby="order-modal-title">
+    <div class="ds-dialog" style="max-width:520px;">
+      <div class="ds-dialog-head">
+        <div class="ds-dialog-title" id="order-modal-title">Configure Order</div>
+        <button type="button" class="ds-dialog-x" aria-label="Close">&times;</button>
+      </div>
+      <form id="order-form" novalidate>
+        <div class="ds-dialog-body">
+          <div class="order-summary" id="order-summary" style="background:var(--ds-surface,#f5f6f8);border:1px solid var(--ds-border,#e2e5ea);border-radius:8px;padding:12px 14px;margin-bottom:18px;font-size:.875rem;"></div>
+
+          <div class="ds-field">
+            <label class="ds-label" for="order-qty">Quantity (tonnes)</label>
+            <input class="ds-input" id="order-qty" type="number" min="1" step="1" inputmode="numeric" value="1" required />
+            <div class="ds-msg" id="order-qty-msg"></div>
+          </div>
+
+          <div class="ds-field">
+            <label class="ds-label" for="order-delivery-method">Delivery method</label>
+            <select class="ds-input" id="order-delivery-method">
+              <option value="ZVIDA Logistics">ZVIDA Logistics</option>
+              <option value="Own Transport">Own Transport</option>
+              <option value="Farm Collection">Farm Collection</option>
+            </select>
+          </div>
+
+          <div class="ds-field">
+            <label class="ds-label" for="order-address">Delivery address</label>
+            <textarea class="ds-input" id="order-address" rows="2" placeholder="Business / collection address"></textarea>
+          </div>
+
+          <div class="ds-field">
+            <label class="ds-label" for="order-payment">Payment method</label>
+            <select class="ds-input" id="order-payment">
+              <option value="ZVIDA Wallet">ZVIDA Wallet</option>
+              <option value="Mobile Money">Mobile Money</option>
+              <option value="Bank Transfer">Bank Transfer</option>
+              <option value="On Delivery">On Delivery</option>
+            </select>
+          </div>
+
+          <div class="order-contact" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="ds-field">
+              <label class="ds-label" for="order-name">Your name</label>
+              <input class="ds-input" id="order-name" type="text" autocomplete="name" required />
+            </div>
+            <div class="ds-field">
+              <label class="ds-label" for="order-phone">Phone</label>
+              <input class="ds-input" id="order-phone" type="tel" autocomplete="tel" required />
+            </div>
+          </div>
+          <div class="ds-field">
+            <label class="ds-label" for="order-email">Email</label>
+            <input class="ds-input" id="order-email" type="email" autocomplete="email" required />
+          </div>
+
+          <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid var(--ds-border,#e2e5ea);padding-top:14px;margin-top:4px;">
+            <span class="ds-label" style="margin:0;">Estimated total</span>
+            <span id="order-total" style="font-size:1.0625rem;font-weight:700;">USD 0.00</span>
+          </div>
+        </div>
+        <div class="ds-dialog-foot">
+          <button type="button" class="ds-dialog-btn secondary" id="order-cancel">Cancel</button>
+          <button type="submit" class="ds-dialog-btn primary" id="order-submit">Place Order</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 </html>

@@ -2,8 +2,13 @@
    ZVIDA Dashboards — shared shell + UI components (v2)
    ============================================================ */
 
-import { syncAll, persistOrder, persistLoad, persistProduct, deleteProduct } from '../lib/zvida-live';
-import type { LiveOrder, LiveLoad, LiveProduct } from '../lib/zvida-live';
+import { syncAll, persistOrder, persistLoad, persistProduct, deleteProduct, persistRfq, deleteRfq, setLiveAccount, getLiveAccount, liveConfigured, fetchUnreadNotifications, markNotificationsRead, sendSupportMessage, fetchMyMessages, fetchProducts, fetchOrders, fetchLoads, fetchOpenRfqs, fetchMyRfqs } from '../lib/zvida-live';
+import type { LiveOrder, LiveLoad, LiveProduct, LiveRfq, LiveMessage } from '../lib/zvida-live';
+import { syncDeliveryStatus, settleContract, assignDriverByName } from '../lib/backend';
+import { uploadListingPhoto, uploadToStorage, getSignedUrl } from '../lib/storage';
+import type { DashboardSession } from '../lib/session';
+import { onAuthChange } from '../lib/supabase';
+import { startRealtime } from '../lib/realtime';
 import { signOutAndRedirect } from '../lib/auth-ui';
 
 export interface PageCfg {
@@ -30,6 +35,11 @@ export interface RoleCfg {
   gradientEnd: string;
   pages: PageCfg[];
   navGroups?: { label: string; pages: string[] }[];
+  /* Pages that stay fully functional for a brand-new live account (no orders/loads yet):
+     marketplace flows plus create/edit forms. Every other page shows a role-specific
+     empty state instead of the demo/dummy content. */
+  keepEmpty?: string[];
+  session?: DashboardSession;
 }
 
 export const ICON = {
@@ -114,11 +124,14 @@ export const ICON = {
   scale: '<path d="M12 3v18"/><path d="M5 21h14"/><path d="M8 7a4 4 0 0 1 8 0"/>',
   upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>',
   trendingUp: '<polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/>',
+  trendingDown: '<polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/><polyline points="17 18 23 18 23 12"/>',
   chevronRight: '<polyline points="9 18 15 12 9 6"/>',
   wallet: '<path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4z"/>',
   users:
     '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   sun: '<circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>',
+  moon: '<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>',
+  monitor: '<rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>',
   map: '<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>',
   percent: '<line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>',
   shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>',
@@ -151,6 +164,9 @@ export const ART: Record<string, Art> = {
   money: { g1: '#9fe8b0', g2: '#15803d', p: '<rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/><circle cx="12" cy="15" r="2.5"/>' },
   scan: { g1: '#86a8f5', g2: '#4f46e5', p: '<path d="M3 8V5a2 2 0 0 1 2-2h3"/><path d="M16 3h3a2 2 0 0 1 2 2v3"/><path d="M21 16v3a2 2 0 0 1-2 2h-3"/><path d="M8 21H5a2 2 0 0 1-2-2v-3"/><line x1="7" y1="12" x2="17" y2="12"/>' },
   shield2: { g1: '#c5b8f5', g2: '#6d28d9', p: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>' },
+  sorghum: { g1: '#f2b56b', g2: '#c2410c', p: '<path d="M8 22V8c0-3 2-6 4-6s4 3 4 6v14"/><path d="M8 13c-2 0-4-1-4-3s2-3 4-3"/><path d="M16 13c2 0 4-1 4-3s-2-3-4-3"/><path d="M12 15l4 2-1 3-3-2-3 2-1-3z"/>' },
+  millet: { g1: '#efe0a8', g2: '#a16207', p: '<path d="M12 3l8 3-8 3-8-3z"/><path d="M12 9l8 3-8 3-8-3z"/><path d="M12 15l8 3-8 3-8-3z"/>' },
+  sugarbeans: { g1: '#e8dcc0', g2: '#92400e', p: '<ellipse cx="12" cy="13" rx="8" ry="6"/><path d="M12 7c0 3 0 12 0 12"/>' },
 };
 
 const PHOTOS: Record<string, string> = {
@@ -187,8 +203,11 @@ export function photo(key: string, size: ThumbSize = 'md', tag?: string): string
 
 export function img(key: string, size: ThumbSize = 'md', tag?: string): string {
   if (PHOTOS[key]) return photo(key, size, tag);
+  if (/^https?:/.test(key)) {
+    return `<span class="dsh-thumb ${size} photo">${tag ? `<span class="dsh-thumb-tag">${tag}</span>` : ''}<img src="${key}" alt="" loading="lazy" /></span>`;
+  }
   const a = ART[key] || ART.grain;
-  return `<span class="dsh-thumb ${size}" style="--tg1:${a.g1};--tg2:${a.g2}">${tag ? `<span class="dsh-thumb-tag">${tag}</span>` : ''}${svg(a.p, 'dsh-thumb-ico')}</span>`;
+  return `<span class="dsh-thumb ${size}" style="--tg2:${a.g2}">${tag ? `<span class="dsh-thumb-tag">${tag}</span>` : ''}${svg(a.p, 'dsh-thumb-ico')}</span>`;
 }
 
 export function avatar(initials: string, size = 36): string {
@@ -275,12 +294,62 @@ export function downloadNow(key: string): void {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 800);
 }
-export function uploadBtn(label: string, variant: string, accept = ''): string {
-  return `<button class="dsh-btn ${variant}" data-upload${accept ? ` data-upload-accept="${accept}"` : ''}>${label}</button>`;
+export interface UploadOpts {
+  bucket?: 'listing-photos' | 'avatars' | 'documents' | 'weighbridge-tickets';
+  on?: string;
+  key?: string;
+}
+export function uploadBtn(label: string, variant: string, accept = '', opts: UploadOpts = {}): string {
+  const bucket = opts.bucket ? ` data-upload-bucket="${opts.bucket}"` : '';
+  const on = opts.on ? ` data-upload-on="${opts.on}"` : '';
+  const key = opts.key ? ` data-upload-key="${opts.key}"` : '';
+  return `<button class="dsh-btn ${variant}" data-upload${accept ? ` data-upload-accept="${accept}"` : ''}${bucket}${on}${key}>${label}</button>`;
+}
+
+/**
+ * URLs/object paths returned by successful uploads, keyed by the button's
+ * `data-upload-key`. `takePendingUpload` consumes (and clears) a value so a
+ * form submit can attach the uploaded asset exactly once.
+ */
+export const pendingUploads: Map<string, string> = new Map();
+export function takePendingUpload(key: string): string | undefined {
+  const v = pendingUploads.get(key);
+  pendingUploads.delete(key);
+  return v;
+}
+
+export async function doUpload(file: File, opts: UploadOpts, btn: HTMLElement): Promise<void> {
+  const original = btn.innerHTML;
+  const id = getLiveAccount()?.id || '';
+  const bucket = opts.bucket || 'listing-photos';
+  btn.innerHTML = 'Uploading…';
+  btn.classList.add('disabled');
+  try {
+    if (bucket === 'listing-photos') {
+      const url = await uploadListingPhoto(file, id);
+      if (opts.key) pendingUploads.set(opts.key, url);
+      if (opts.on) JS[opts.on]?.(url, btn);
+      toast('Photo uploaded', 'info');
+    } else {
+      const { path, url } = await uploadToStorage(bucket, file, id || 'general');
+      const ref = bucket === 'avatars' ? url : path;
+      if (opts.key) pendingUploads.set(opts.key, ref);
+      if (opts.on) JS[opts.on]?.(ref, btn);
+      toast(bucket === 'weighbridge-tickets' ? 'Weighbridge photo attached' : 'File uploaded', 'info');
+    }
+  } catch {
+    toast('Upload failed — check your connection', 'error');
+  } finally {
+    btn.innerHTML = original;
+    btn.classList.remove('disabled');
+  }
 }
 
 /* ---------- JS action hooks (real state changes from dashboards) ---------- */
 export const JS: Record<string, (payload: string, el: HTMLElement) => void> = {};
+/* Async page fragments (live data): pages register a key; render() fills any
+   element marked `data-async="<key>"` after the page paints. */
+export const asyncFills: Record<string, () => Promise<string>> = {};
 export function jsBtn(label: string, variant: string, fn: string, payload = '', toastMsg?: string): string {
   return `<button class="dsh-btn ${variant}" data-js="${fn}${payload ? ':' + payload : ''}"${toastMsg ? ` data-toast="${toastMsg.replace(/"/g, '&quot;')}"` : ''}>${label}</button>`;
 }
@@ -399,13 +468,14 @@ export function head(title: string, sub?: string, actions?: string): string {
 }
 
 /* ---------- Hero ---------- */
-export function hero(o: { kick?: string; title: string; sub: string; actions?: string; media?: string; bg?: string; stats?: { l: string; v: string }[] }): string {
+export function hero(o: { kick?: string; title: string; sub: string; actions?: string; media?: string; bg?: string; stats?: { l: string; v: string }[]; status?: { label: string; tone: 'live' | 'ok' | 'warn' } }): string {
   const stats = o.stats
     ? `<div class="dsh-hero-stats">${o.stats.map((s) => `<div class="dsh-hero-stat"><span class="v">${s.v}</span><span class="l">${s.l}</span></div>`).join('')}</div>`
     : '';
+  const kick = o.kick || o.status ? `<span class="dsh-hero-kick">${o.kick ? `<span>${o.kick}</span>` : ''}${o.status ? `<span class="dsh-hero-status ${o.status.tone}"><i></i>${o.status.label}</span>` : ''}</span>` : '';
   return `<div class="dsh-hero"${o.bg ? ` style="background-image:url('${o.bg}')"` : ''}>
     <div class="dsh-hero-body">
-      ${o.kick ? `<span class="dsh-hero-kick">${o.kick}</span>` : ''}
+      ${kick}
       <h2>${o.title}</h2>
       <p>${o.sub}</p>
       ${o.actions ? `<div class="dsh-hero-actions">${o.actions}</div>` : ''}
@@ -448,7 +518,7 @@ export function kpis(stats: { label: string; value: string | number; icon?: stri
     .map((s) => {
       const isNum = typeof s.value === 'number';
       const delta = s.delta
-        ? `<span class="dsh-kpi-delta ${s.up === undefined ? 'flat' : s.up ? 'up' : 'down'}">${s.up === false ? '↓' : '↑'} ${s.delta}</span>`
+        ? `<span class="dsh-kpi-delta ${s.up === undefined ? 'flat' : s.up ? 'up' : 'down'}">${svg(s.up === false ? ICON.trendingDown : ICON.trendingUp)} ${s.delta}</span>`
         : '';
       return `<div class="dsh-kpi"${s.open ? ` data-open="${s.open}"` : ''}>
         <div class="dsh-kpi-top">
@@ -514,9 +584,18 @@ export function banner(tone: 'info' | 'warn' | 'ok' | 'danger', text: string, ac
 }
 
 /* ---------- States: empty / error / success / loading ---------- */
-export function emptyState(o: { icon?: string; title: string; sub: string; action?: string; actionToast?: string; actionHref?: string; hint?: string }): string {
-  return `<div class="dsh-state dsh-empty">
-    <span class="dsh-state-ico">${svg(o.icon || ICON.search)}</span>
+function artTile(key: string, icon?: string): string {
+  const a = ART[key] || ART.grain;
+  return `<span class="dsh-art" style="--tg2:${a.g2}">
+    <span class="dsh-art-ico">${svg(icon || ICON.spark)}</span>
+  </span>`;
+}
+
+export function emptyState(o: { icon?: string; title: string; sub: string; action?: string; actionToast?: string; actionHref?: string; hint?: string; art?: string; kick?: string }): string {
+  const tile = o.art ? artTile(o.art, o.icon) : `<span class="dsh-state-ico">${svg(o.icon || ICON.search)}</span>`;
+  return `<div class="dsh-state dsh-empty${o.art ? ' art' : ''}">
+    ${tile}
+    ${o.kick ? `<div class="dsh-state-kick">${o.kick}</div>` : ''}
     <div class="dsh-state-title">${o.title}</div>
     <div class="dsh-state-sub">${o.sub}</div>
     ${o.action ? `<div class="dsh-state-act">${btn(o.action, 'primary', o.actionToast || o.action, o.actionHref || undefined)}</div>` : ''}
@@ -777,6 +856,7 @@ export interface MarketOrder {
   id: string;
   ref: string;
   buyer: string;
+  userId?: string;
   address: string;
   delivery: string;
   payment: string;
@@ -808,8 +888,18 @@ function mkWrap(status: string): { status: string; tone: PillTone } {
   }
 }
 
-function mkSeed(): { cat: MarketProduct[]; cart: Record<string, number>; orders: MarketOrder[]; seq: number } {
-  const cat: MarketProduct[] = [
+/* ZVIDA's own marketplace catalog — the full range of grains and inputs ZVIDA
+   always carries. This is the guaranteed floor for every account (including a
+   brand-new real account), so the marketplace is never empty. Real accounts
+   merge their own and other users' listings on top via mergeCatalog(). */
+function zvidaGoods(): MarketProduct[] {
+  return [
+    { id: 'g-maize', name: 'Maize', category: 'Grain', price: 230, unit: 'ton', seller: 'ZVIDA', stock: 60, rating: 4.6, reviews: 141, thumb: 'grain' },
+    { id: 'g-soya', name: 'Soya', category: 'Grain', price: 580, unit: 'ton', seller: 'ZVIDA', stock: 45, rating: 4.7, reviews: 118, thumb: 'soya' },
+    { id: 'g-wheat', name: 'Wheat', category: 'Grain', price: 360, unit: 'ton', seller: 'ZVIDA', stock: 30, rating: 4.5, reviews: 97, thumb: 'wheat' },
+    { id: 'g-sorghum', name: 'Sorghum', category: 'Grain', price: 290, unit: 'ton', seller: 'ZVIDA', stock: 40, rating: 4.4, reviews: 82, thumb: 'sorghum' },
+    { id: 'g-sugarbeans', name: 'Sugar Beans', category: 'Grain', price: 420, unit: 'ton', seller: 'ZVIDA', stock: 25, rating: 4.8, reviews: 74, thumb: 'sugarbeans' },
+    { id: 'g-millet', name: 'Millet', category: 'Grain', price: 380, unit: 'ton', seller: 'ZVIDA', stock: 20, rating: 4.3, reviews: 56, thumb: 'millet' },
     { id: 'fert', name: 'NPK Fertilizer 10-26-26', category: 'Fertilizer', price: 45, unit: '50kg bag', seller: 'Vendor Supplies Ltd', stock: 20, rating: 4.5, reviews: 128, thumb: 'fert' },
     { id: 'seed', name: 'SC403 Maize Seed', category: 'Seeds', price: 18, unit: 'kg', seller: 'Vendor Supplies Ltd', stock: 48, rating: 4.7, reviews: 96, thumb: 'seed' },
     { id: 'chem', name: 'Roundup Herbicide', category: 'Chemicals', price: 15, unit: '1L', seller: 'Vendor Supplies Ltd', stock: 12, rating: 4.2, reviews: 61, thumb: 'chem' },
@@ -819,6 +909,25 @@ function mkSeed(): { cat: MarketProduct[]; cart: Record<string, number>; orders:
     { id: 'grain', name: 'Maize Grain (Stockfeed)', category: 'Stockfeed', price: 150, unit: 'ton', seller: 'Miller Corp', stock: 40, rating: 4.3, reviews: 88, thumb: 'grain' },
     { id: 'wheat', name: 'Wheat Bran (Stockfeed)', category: 'Stockfeed', price: 180, unit: 'ton', seller: 'Miller Corp', stock: 25, rating: 4.6, reviews: 57, thumb: 'wheat' },
   ];
+}
+
+/* Live/user listings take precedence; the ZVIDA baseline fills any gap so the
+   marketplace always carries the full range. De-duplicated by name + seller. */
+function mergeCatalog(primary: MarketProduct[], base: MarketProduct[]): MarketProduct[] {
+  const seen = new Set<string>();
+  const out: MarketProduct[] = [];
+  const key = (p: MarketProduct) => `${p.name}|${p.seller}`.toLowerCase();
+  for (const p of [...primary, ...base]) {
+    const k = key(p);
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(p);
+  }
+  return out;
+}
+
+function mkSeed(): { cat: MarketProduct[]; cart: Record<string, number>; orders: MarketOrder[]; seq: number; rfqs: LiveRfq[] } {
+  const cat: MarketProduct[] = zvidaGoods();
   const o = (
     ref: string, buyer: string, address: string, delivery: string, payment: string, placedAt: string,
     items: MarketOrder['items'], step: number, status?: string
@@ -842,6 +951,7 @@ function mkSeed(): { cat: MarketProduct[]; cart: Record<string, number>; orders:
     cat,
     cart: { fert: 2, seed: 1 },
     seq: 2221,
+    rfqs: [],
     orders: [
       o('#C-2212', 'James (Farmer)', 'Farm 42, Ruwa', 'Standard', 'ZVIDA Wallet', 'Jul 31, 2026 · 08:12', [{ id: 'fert', name: 'NPK Fertilizer 10-26-26', price: 45, qty: 4, thumb: 'fert', seller: 'Vendor Supplies Ltd', unit: '50kg bag' }], 0),
       o('#C-2211', 'James (Farmer)', 'Farm 42, Ruwa', 'Standard', 'ZVIDA Wallet', 'Jul 30, 2026 · 16:40', [{ id: 'seed', name: 'SC403 Maize Seed', price: 18, qty: 10, thumb: 'seed', seller: 'Vendor Supplies Ltd', unit: 'kg' }], 2),
@@ -860,13 +970,14 @@ function mkSeed(): { cat: MarketProduct[]; cart: Record<string, number>; orders:
   };
 }
 
-let marketStore: { cat: MarketProduct[]; cart: Record<string, number>; orders: MarketOrder[]; seq: number } | null = null;
+let marketStore: { cat: MarketProduct[]; cart: Record<string, number>; orders: MarketOrder[]; seq: number; rfqs: LiveRfq[] } | null = null;
 
 function mkLoad(): typeof marketStore {
   if (marketStore) return marketStore;
   try {
     const raw = localStorage.getItem(MK_KEY);
     marketStore = raw ? JSON.parse(raw) : null;
+    if (marketStore && !Array.isArray(marketStore.rfqs)) marketStore.rfqs = [];
   } catch {
     marketStore = null;
   }
@@ -913,6 +1024,17 @@ export function marketRemoveProduct(id: string): void {
 export function marketOrders(seller?: string): MarketOrder[] {
   const all = [...mkLoad()!.orders].reverse();
   return seller ? all.filter((o) => o.items.some((i) => i.seller === seller)) : all;
+}
+
+/* Real accounts are scoped to their own rows by user_id; demo accounts match
+   the seeded persona name stored in `currentUser` (e.g. "James (Farmer)"). */
+export function marketMyOrders(): MarketOrder[] {
+  const a = getLiveAccount();
+  if (a && !a.isDemo) {
+    return marketOrders().filter((o) => o.userId === a.id);
+  }
+  const name = currentUser.split(' (')[0];
+  return marketOrders().filter((o) => o.buyer === currentUser || o.buyer.startsWith(name));
 }
 
 export function marketOrder(id: string): MarketOrder | undefined {
@@ -962,6 +1084,30 @@ export function marketLastOrder(): MarketOrder | undefined {
   return s.orders[s.orders.length - 1];
 }
 
+/* ---------- RFQs (live accounts only; demo accounts keep hardcoded pages) ---------- */
+
+export function marketMyRfqs(): LiveRfq[] {
+  const me = liveUserId();
+  return mkLoad()!.rfqs.filter((r) => me && r.offtakerId === me);
+}
+
+export function marketOpenRfqs(): LiveRfq[] {
+  const me = liveUserId();
+  return mkLoad()!.rfqs.filter((r) => r.status === 'OPEN' && r.offtakerId !== me);
+}
+
+export function marketAddRfq(r: LiveRfq): void {
+  mkLoad()!.rfqs.unshift(r);
+  mkSave();
+  void persistRfq(r);
+}
+
+export function marketRemoveRfq(id: string): void {
+  mkLoad()!.rfqs = mkLoad()!.rfqs.filter((r) => r.id !== id);
+  mkSave();
+  void deleteRfq(id);
+}
+
 export function marketPlace(buyer: string): MarketOrder {
   const s = mkLoad()!;
   const lines = marketCartLines();
@@ -970,6 +1116,7 @@ export function marketPlace(buyer: string): MarketOrder {
     id: 'mk' + (s.seq - 1),
     ref,
     buyer,
+    userId: liveUserId(),
     address: 'Farm 42, Ruwa',
     delivery: 'Standard',
     payment: 'ZVIDA Wallet',
@@ -1033,8 +1180,9 @@ export function marketRecommend(limit = 3): MarketProduct[] {
 
 export function stars(r: number): string {
   const full = Math.round(r);
+  const star = '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>';
   let h = '';
-  for (let i = 1; i <= 5; i++) h += `<span class="dsh-star ${i <= full ? 'on' : ''}">★</span>`;
+  for (let i = 1; i <= 5; i++) h += `<span class="dsh-star ${i <= full ? 'on' : ''}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${star}</svg></span>`;
   return `<span class="dsh-stars">${h}</span>`;
 }
 
@@ -1046,7 +1194,7 @@ export function marketProductCard(p: MarketProduct, group = 'shop'): string {
     <div class="dsh-shop-card-body">
       <div class="dsh-shop-name">${p.name}</div>
       <div class="dsh-shop-rate">${stars(p.rating)} <span class="dsh-shop-rev">${p.reviews} ratings</span></div>
-      <div class="dsh-shop-sub">${p.seller} · ${p.unit}</div>
+      <div class="dsh-shop-sub">${ZVIDA_COUNTERPARTY} · ${p.unit}</div>
       <div class="dsh-shop-price">${marketMoney(p.price)}</div>
       ${stock}
       ${inCart}
@@ -1063,7 +1211,7 @@ export function marketCartLine(it: MarketOrder['items'][number]): string {
     <div class="dsh-cart-thumb">${img(it.thumb, 'sm')}</div>
     <div class="dsh-cart-info">
       <div class="dsh-cart-name">${it.name}</div>
-      <div class="dsh-cart-sub">${it.seller} · ${it.unit} · ${marketMoney(it.price)} each</div>
+      <div class="dsh-cart-sub">${ZVIDA_COUNTERPARTY} · ${it.unit} · ${marketMoney(it.price)} each</div>
       <div class="dsh-cart-ctrl">
         ${jsBtn('−', 'ghost sm', 'marketQty', it.id + ':-1')}
         <span class="dsh-cart-qty">${it.qty}</span>
@@ -1086,7 +1234,7 @@ export function marketOrderFoot(o: MarketOrder, role: 'buyer' | 'seller' | 'admi
     if (o.status === 'CONFIRMED') return jsBtn('Mark Processing', 'primary sm', 'mktAction', o.id + ':process', 'Order marked as processing');
     if (o.status === 'PROCESSING') return jsBtn('Mark Shipped', 'primary sm', 'mktAction', o.id + ':ship', 'Order marked as shipped');
     if (o.status === 'SHIPPED' || o.status === 'OUT_FOR_DELIVERY') return pill('Awaiting delivery', 'indigo');
-    if (o.status === 'DELIVERED') return `${pill('Delivered', 'green')}${jsBtn('Call Buyer', 'ghost sm', 'marketCall', o.buyer, 'Dialing buyer…')}`;
+    if (o.status === 'DELIVERED') return `${pill('Delivered', 'green')}${jsBtn('Call ' + zBuyerName(o, role), 'ghost sm', 'marketCall', zBuyerName(o, role), 'Dialing buyer…')}`;
     return pill(st.status, st.tone);
   }
   if (role === 'driver') {
@@ -1115,7 +1263,7 @@ export function marketOrderCard(o: MarketOrder, role: 'buyer' | 'seller' | 'admi
     key: o.id,
     open,
     time: `${o.placedAt} · ${o.payment}`,
-    meta: `${marketSteps(o)}<br/>Buyer: <b>${o.buyer}</b> · Delivery: ${o.delivery} · Total: <b>${marketMoney(o.total)}</b>`,
+    meta: `${marketSteps(o)}<br/>Buyer: <b>${zBuyerName(o, role)}</b> · Delivery: ${o.delivery} · Total: <b>${marketMoney(o.total)}</b>`,
     foot: marketOrderFoot(o, role),
   })}`;
 }
@@ -1256,6 +1404,10 @@ export interface Consignment {
   slip: string;
   pics: number;
   live: number;
+  photos: string[];
+  contractId?: string;
+  deliveryId?: string;
+  driverId?: string;
 }
 
 const LG_KEY = 'zvida_freight_v2';
@@ -1296,7 +1448,7 @@ function lgSeed(): { loads: Consignment[]; seq: number } {
       unitPrice, qty, amount: Math.round((qty / 1000) * unitPrice),
       payTerm, status, tone: lgWrap(status).tone, step, flow: [...LG_FLOW],
       history: [{ t: lgWrap(status).status, d: 'Seeded from matched contract ' + contract }],
-      due, slip, pics: 0, live,
+      due, slip, pics: 0, live, photos: [],
       driver, phone, truck, trailer,
     };
   };
@@ -1396,6 +1548,64 @@ export function loadMoney(v: number): string {
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+/* ---------- Blind-principal masking ---------- */
+export type LoadRole = 'supplier' | 'driver' | 'receiver' | 'admin';
+
+export const ZVIDA_COUNTERPARTY = 'ZVIDA Agro Traders';
+
+function zFromName(l: Consignment, role: LoadRole): string {
+  return role === 'receiver' ? ZVIDA_COUNTERPARTY : l.supplier;
+}
+function zToName(l: Consignment, role: LoadRole): string {
+  return role === 'supplier' ? ZVIDA_COUNTERPARTY : l.receiver;
+}
+function zFromSub(l: Consignment, role: LoadRole): string {
+  return role === 'receiver' ? 'ZVIDA Logistics · 5417 Cranbrook, Ruwa, Harare' : l.from;
+}
+function zToSub(l: Consignment, role: LoadRole): string {
+  return role === 'supplier' ? 'ZVIDA Logistics · 5417 Cranbrook, Ruwa, Harare' : l.dest;
+}
+function zRouteStart(l: Consignment, role: LoadRole): string {
+  return role === 'receiver' ? ZVIDA_COUNTERPARTY : l.from;
+}
+function zRouteEnd(l: Consignment, role: LoadRole): string {
+  return role === 'supplier' ? ZVIDA_COUNTERPARTY : l.dest;
+}
+function zRoute(l: Consignment, role: LoadRole): string {
+  return `${zRouteStart(l, role)} → ${zRouteEnd(l, role)}`;
+}
+
+export type MarketRole = 'buyer' | 'seller' | 'admin' | 'driver';
+
+function zBuyerName(o: MarketOrder, role: MarketRole): string {
+  if (role === 'admin') return o.buyer;
+  return ZVIDA_COUNTERPARTY;
+}
+function zSellerName(name: string, role: MarketRole): string {
+  if (role === 'admin') return name;
+  return ZVIDA_COUNTERPARTY;
+}
+function zBuyerAddr(o: MarketOrder, role: MarketRole): string {
+  if (role === 'seller') return 'ZVIDA Logistics Hub · Ruwa';
+  return o.address;
+}
+
+function zTimeline(l: Consignment, role: LoadRole): string {
+  const viewer = role === 'receiver' ? 'offtaker' : 'supplier';
+  const amount = zamountFor(l, viewer);
+  const money = amount ? loadMoney(amount) : '';
+  return l.history.map((h) => {
+    let d = h.d;
+    if (role === 'supplier' || role === 'receiver') {
+      d = d.replace(/\$\d{1,3}(?:,\d{3})*\.\d{2}/g, money);
+      if (role === 'receiver') {
+        d = d.replace(/(paid|released|paid out) to [^·]+/gi, '$1 to ' + ZVIDA_COUNTERPARTY);
+      }
+    }
+    return `<div class="dsh-drawer-event"><span class="t">${h.t}</span><span class="d">${d}</span></div>`;
+  }).join('');
+}
+
 /* ---------- Ticker ---------- */
 export function ticker(items: { name: string; price: string; old?: string }[]): string {
   const once = items
@@ -1459,6 +1669,21 @@ function lgTransition(l: Consignment, action: string, note: string): void {
   }
   lgSave();
   void persistLoad(l as unknown as LiveLoad);
+  void syncLiveLoad(l, action);
+}
+
+/** Push a real consignment transition to the backend (edge functions). */
+function syncLiveLoad(l: Consignment, action: string): void {
+  if (!liveConfigured() || !l.contractId) return;
+  if (action === 'assign') {
+    void assignDriverByName(l.contractId, l.driver || '');
+    return;
+  }
+  if (action === 'settle') {
+    void settleContract(l.contractId, l.ref);
+    return;
+  }
+  void syncDeliveryStatus(l as unknown as LiveLoad, action);
 }
 
 export function freightUpdate(id: string, action: string, note?: string): void {
@@ -1484,7 +1709,7 @@ export function loadProgressBar(l: Consignment): string {
     <div class="dsh-lg-progress-track"><span class="dsh-lg-progress-fill" data-live-pct style="width:${pct}%"></span></div></div>`;
 }
 
-export function loadTele(l: Consignment): string {
+export function loadTele(l: Consignment, role: LoadRole = 'supplier'): string {
   if (l.status !== 'IN_TRANSIT') return '';
   return `<div class="dsh-lg-tele" data-live="${l.id}">
     <span class="dsh-live-dot"></span>
@@ -1494,7 +1719,7 @@ export function loadTele(l: Consignment): string {
       <div><span class="l">Speed</span><span class="v">${Math.round(40 + l.live * 0.35)} km/h</span></div>
       <div><span class="l">Last ping</span><span class="v" data-live-ping>${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></div>
     </div>
-    ${routeMap(l.from, l.dest, { x: 16, y: 60 }, { x: 76, y: 42 }, Math.min(l.live, 95))}
+    ${routeMap(zRouteStart(l, role), zRouteEnd(l, role), { x: 16, y: 60 }, { x: 76, y: 42 }, Math.min(l.live, 95))}
   </div>`;
 }
 
@@ -1515,12 +1740,15 @@ export function loadWeights(l: Consignment): string {
   return `<div class="dsh-lg-weights">${cells}</div>`;
 }
 
-export function loadAmount(l: Consignment): string {
+export function loadAmount(l: Consignment, role: LoadRole = 'supplier'): string {
   if (!l.qty) return '';
+  const party = role === 'receiver' ? 'offtaker' : 'supplier';
+  const price = zpriceFor(l, party);
+  const amount = zamountFor(l, party);
   return `<div class="dsh-lg-amount">
     <div><span class="l">Quantity</span><span class="v">${(l.qty / 1000).toFixed(2)} t</span></div>
-    <div><span class="l">Rate</span><span class="v">${loadMoney(l.unitPrice)} / t</span></div>
-    <div><span class="l">Amount</span><span class="v strong">${loadMoney(l.amount)}</span></div>
+    <div><span class="l">Rate</span><span class="v">${loadMoney(price)} / t</span></div>
+    <div><span class="l">Amount</span><span class="v strong">${loadMoney(amount)}</span></div>
     <div><span class="l">Terms</span><span class="v">${loadTerm(l)}</span></div>
   </div>`;
 }
@@ -1531,7 +1759,7 @@ export function loadWeighForm(l: Consignment, point: 'w1' | 'w2'): string {
     <div class="dsh-lg-form-title">${isW1 ? 'First weight' : 'Second weight'} <span class="dsh-lg-form-note">${isW1 ? 'truck on the scale at the farm' : 'truck on the scale at delivery'}</span></div>
     <div class="dsh-lg-form-row">
       <input class="dsh-input" data-wg-id="${l.id}" data-wg="${point}" inputmode="numeric" placeholder="Weight in kg" value="${(isW1 ? l.weight1 : l.weight2) || ''}" />
-      ${uploadBtn('Photo', 'ghost', 'image/*')}
+      ${uploadBtn('Photo', 'ghost', 'image/*', { bucket: 'weighbridge-tickets', on: 'lgPhoto', key: 'lg-photo' })}
     </div>
     <div class="dsh-btn-row">${jsBtn(isW1 ? 'Submit First Weight' : 'Submit Second Weight', 'primary sm', 'lgWeigh', l.id + ':' + point, isW1 ? 'First weight recorded — net on second weight' : 'Second weight recorded — net calculated, payment pending')}</div>
   </div>`;
@@ -1548,7 +1776,7 @@ export function loadScaleForm(l: Consignment): string {
     </div>
     <div class="dsh-lg-form-row">
       <span class="dsh-lg-form-note">Take a picture of the scale reading and the full load.</span>
-      ${uploadBtn('Photo', 'ghost', 'image/*')}
+      ${uploadBtn('Photo', 'ghost', 'image/*', { bucket: 'weighbridge-tickets', on: 'lgPhoto', key: 'lg-photo' })}
     </div>
     <div class="dsh-btn-row">${jsBtn('Confirm Final Load', 'primary sm', 'lgCount', l.id, 'Load counted — amount calculated, payment pending')}</div>
   </div>`;
@@ -1585,14 +1813,14 @@ function sendMessage(chatEl: HTMLElement | null): void {
   toast('Message sent');
 }
 
-function orderDetailHtml(o: MarketOrder): string {
+function orderDetailHtml(o: MarketOrder, role: MarketRole = 'buyer'): string {
   return `
   <div class="dsh-drawer-row">${pill(o.status, mkWrap(o.status).tone)}<span class="dsh-drawer-note">${o.placedAt}</span></div>
   ${marketSteps(o)}
   <div class="dsh-drawer-grid">
-    <div><span class="l">Buyer</span><span class="v">${o.buyer}</span></div>
+    <div><span class="l">Buyer</span><span class="v">${zBuyerName(o, role)}</span></div>
     <div><span class="l">Delivery</span><span class="v">${o.delivery}</span></div>
-    <div><span class="l">Address</span><span class="v">${o.address}</span></div>
+    <div><span class="l">Address</span><span class="v">${zBuyerAddr(o, role)}</span></div>
     <div><span class="l">Payment</span><span class="v">${o.payment}</span></div>
     <div><span class="l">Items</span><span class="v">${o.items.reduce((s, i) => s + i.qty, 0)}</span></div>
     <div><span class="l">Total</span><span class="v strong">${marketMoney(o.total)}</span></div>
@@ -1601,7 +1829,7 @@ function orderDetailHtml(o: MarketOrder): string {
   ${o.items.map((i) => `
     <div class="dsh-drawer-line">
       <span class="dsh-drawer-thumb">${img(i.thumb, 'xs')}</span>
-      <span class="dsh-drawer-line-main">${i.name}<span class="dsh-drawer-line-sub">${i.seller} · ${i.unit} · ${marketMoney(i.price)} each</span></span>
+      <span class="dsh-drawer-line-main">${i.name}<span class="dsh-drawer-line-sub">${zSellerName(i.seller, role)} · ${i.unit} · ${marketMoney(i.price)} each</span></span>
       <span class="dsh-drawer-line-qty">×${i.qty}</span>
       <span class="dsh-drawer-line-total">${marketMoney(i.price * i.qty)}</span>
     </div>`).join('')}
@@ -1609,26 +1837,26 @@ function orderDetailHtml(o: MarketOrder): string {
   ${o.history.map((h) => `<div class="dsh-drawer-event"><span class="t">${h.t}</span><span class="d">${h.d}</span></div>`).join('')}`;
 }
 
-function loadDetailHtml(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admin'): string {
+function loadDetailHtml(l: Consignment, role: LoadRole): string {
   const st = lgWrap(l.status);
   return `
   <div class="dsh-drawer-row">${pill(st.status, st.tone)}${loadTerm(l)}<span class="dsh-drawer-note">${l.contract} · Due ${l.due}</span></div>
   <div class="dsh-lg-meta-row">
-    <span>${svg(ICON.route)} ${l.from} → ${l.dest}</span>
+    <span>${svg(ICON.route)} ${zRoute(l, role)}</span>
     <span>${svg(ICON.truck)} ${l.driver || 'No driver assigned'} · ${l.truck || '—'}</span>
     <span>${svg(ICON.contracts)} ${l.contract} · ${l.poRef} · ${l.order}</span>
   </div>
   <div class="dsh-lg-meta-row">
-    <span>${svg(ICON.users)} Supplier: ${l.supplier}</span>
-    <span>${svg(ICON.buy)} Receiver: ${l.receiver}</span>
+    <span>${svg(ICON.users)} Supplier: ${zFromName(l, role)}</span>
+    <span>${svg(ICON.buy)} Receiver: ${zToName(l, role)}</span>
     <span>${svg(ICON.weighbridge)} ${l.weightMode === 'weighbridge' ? 'Weighbridge' : 'Scale · ' + l.bucketKg + ' kg bucket'}</span>
   </div>
   ${loadSteps(l)}
   ${loadProgressBar(l)}
   ${loadWeights(l)}
-  ${loadAmount(l)}
+  ${loadAmount(l, role)}
   <div class="dsh-drawer-sec">Timeline</div>
-  ${l.history.map((h) => `<div class="dsh-drawer-event"><span class="t">${h.t}</span><span class="d">${h.d}</span></div>`).join('')}`;
+  ${zTimeline(l, role)}`;
 }
 
 function productDetailHtml(p: MarketProduct): string {
@@ -1637,13 +1865,13 @@ function productDetailHtml(p: MarketProduct): string {
   <div class="dsh-drawer-row">${pill(p.category, 'blue')}${stock}</div>
   <div class="dsh-drawer-line">
     <span class="dsh-drawer-thumb">${img(p.thumb, 'md')}</span>
-    <span class="dsh-drawer-line-main">${p.name}<span class="dsh-drawer-line-sub">${p.seller} · ${p.unit}</span></span>
+    <span class="dsh-drawer-line-main">${p.name}<span class="dsh-drawer-line-sub">${ZVIDA_COUNTERPARTY} · ${p.unit}</span></span>
     <span class="dsh-drawer-line-total">${marketMoney(p.price)}</span>
   </div>
   <div class="dsh-drawer-grid">
     <div><span class="l">Rating</span><span class="v">${stars(p.rating)} <span class="dsh-drawer-note">${p.reviews} reviews</span></span></div>
     <div><span class="l">Unit</span><span class="v">${p.unit}</span></div>
-    <div><span class="l">Seller</span><span class="v">${p.seller}</span></div>
+    <div><span class="l">Seller</span><span class="v">${ZVIDA_COUNTERPARTY}</span></div>
     <div><span class="l">Stock</span><span class="v">${p.stock}</span></div>
   </div>`;
 }
@@ -1759,7 +1987,17 @@ export function wireToasts(root: HTMLElement): void {
       inp.accept = up.getAttribute('data-upload-accept') || '*';
       inp.onchange = () => {
         const f = inp.files?.[0];
-        if (f) toast(`${f.name} attached`, 'info');
+        if (!f) return;
+        if (!liveConfigured()) {
+          toast(`${f.name} attached`, 'info');
+          return;
+        }
+        const opts: UploadOpts = {
+          bucket: (up.getAttribute('data-upload-bucket') as UploadOpts['bucket']) || 'listing-photos',
+          on: up.getAttribute('data-upload-on') || undefined,
+          key: up.getAttribute('data-upload-key') || undefined,
+        };
+        void doUpload(f, opts, up);
       };
       inp.click();
       return;
@@ -1863,7 +2101,7 @@ export function wireToasts(root: HTMLElement): void {
       if (oKey && oKey.startsWith('mk')) {
         const o = marketOrder(oKey);
         if (o) {
-          openDetail(`Order ${o.ref}`, orderDetailHtml(o), marketOrderFoot(o, role));
+          openDetail(`Order ${o.ref}`, orderDetailHtml(o, role), marketOrderFoot(o, role));
           return;
         }
       }
@@ -2001,7 +2239,7 @@ export interface FieldVal {
   msg?: string;
 }
 
-const FORM_RULES: Record<string, FieldVal> = {};
+export const FORM_RULES: Record<string, FieldVal> = {};
 export function formRules(rules: Record<string, FieldVal>): void {
   Object.assign(FORM_RULES, rules);
 }
@@ -2025,44 +2263,31 @@ function clearFieldError(ctl: HTMLElement): void {
   field?.classList.remove('invalid');
 }
 
-function checkField(ctl: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, spec: FieldVal): boolean {
+export function checkField(ctl: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement, spec: FieldVal, show: boolean): boolean {
   clearFieldError(ctl);
   const v = (ctl.value || '').trim();
   const isSelect = ctl.tagName === 'SELECT';
+  let msg = '';
   if (isSelect && spec.req && !ctl.value) {
-    setFieldError(ctl, spec.msg || 'Please choose an option.');
-    return false;
+    msg = spec.msg || 'Please choose an option.';
+  } else if (spec.req && !isSelect && !v) {
+    msg = spec.msg || 'Please fill this in before continuing.';
+  } else if (v && !isSelect) {
+    if (spec.min !== undefined && v.length < spec.min) msg = `Needs at least ${spec.min} characters.`;
+    else if (spec.max !== undefined && v.length > spec.max) msg = `Keep it under ${spec.max} characters.`;
   }
-  if (spec.req && !isSelect && !v) {
-    setFieldError(ctl, spec.msg || 'Please fill this in before continuing.');
-    return false;
-  }
-  if (v && !isSelect) {
-    if (spec.min !== undefined && v.length < spec.min) {
-      setFieldError(ctl, `Needs at least ${spec.min} characters.`);
-      return false;
-    }
-    if (spec.max !== undefined && v.length > spec.max) {
-      setFieldError(ctl, `Keep it under ${spec.max} characters.`);
-      return false;
-    }
-  }
-  if (v && spec.ph && !spec.ph.test(v)) {
-    setFieldError(ctl, spec.msg || 'Please check the format — e.g. +263 77 123 4567.');
-    return false;
-  }
-  if (v && spec.num) {
+  if (!msg && v && spec.ph && !spec.ph.test(v)) msg = spec.msg || 'Please check the format — e.g. +263 77 123 4567.';
+  if (!msg && v && spec.num) {
     const n = parseFloat(v);
     const range = spec.num.min !== undefined && spec.num.max !== undefined ? ` between ${spec.num.min} and ${spec.num.max}` : spec.num.min !== undefined ? ` of at least ${spec.num.min}` : spec.num.max !== undefined ? ` up to ${spec.num.max}` : '';
     if (Number.isNaN(n) || (spec.num.min !== undefined && n < spec.num.min) || (spec.num.max !== undefined && n > spec.num.max)) {
-      setFieldError(ctl, spec.msg || `Enter a number${range}.`);
-      return false;
-    }
-    if (spec.num.step !== undefined && spec.num.step > 0 && !Number.isNaN(n)) {
+      msg = spec.msg || `Enter a number${range}.`;
+    } else if (spec.num.step !== undefined && spec.num.step > 0 && !Number.isNaN(n)) {
       ctl.value = String((Math.round(n / spec.num.step) * spec.num.step).toFixed(2).replace(/\.?0+$/, ''));
     }
   }
-  return true;
+  if (msg && show) setFieldError(ctl, msg);
+  return !msg;
 }
 
 function updatePwCheck(box: HTMLElement, value: string): void {
@@ -2075,28 +2300,34 @@ function updatePwCheck(box: HTMLElement, value: string): void {
   checks.forEach(([k, ok]) => box.querySelector<HTMLElement>(`[data-pw="${k}"]`)?.classList.toggle('ok', ok));
 }
 
-function validateForm(form: HTMLElement, silent: boolean): boolean {
+function computeValidity(form: HTMLElement): boolean {
   const ctrls = [...form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select')];
   let ok = true;
+  for (const c of ctrls) {
+    if (!c.dataset.val) continue;
+    const spec = FORM_RULES[c.dataset.val];
+    if (!spec) continue;
+    if (!checkField(c, spec, false)) ok = false;
+  }
+  return ok;
+}
+
+function showAllErrors(form: HTMLElement): void {
+  const ctrls = [...form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input, textarea, select')];
   let firstBad: HTMLElement | null = null;
   for (const c of ctrls) {
     if (!c.dataset.val) continue;
     const spec = FORM_RULES[c.dataset.val];
     if (!spec) continue;
-    const valid = silent || c.dataset.touched === '1' ? checkField(c, spec) : true;
-    if (!valid) {
-      ok = false;
-      if (!firstBad) firstBad = c.closest('.dsh-field') as HTMLElement | null;
-    }
+    if (!checkField(c, spec, true) && !firstBad) firstBad = c.closest('.dsh-field') as HTMLElement | null;
   }
-  if (!ok && firstBad) firstBad.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  return ok;
+  if (firstBad) firstBad.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 function updateSubmit(form: HTMLElement): void {
   const btnEl = form.querySelector<HTMLButtonElement>('[data-submit]');
   if (btnEl) {
-    const ok = validateForm(form, true);
+    const ok = computeValidity(form);
     btnEl.disabled = !ok;
     btnEl.title = ok ? '' : 'Complete the highlighted fields to continue';
   }
@@ -2120,7 +2351,8 @@ function ensureCounters(form: HTMLElement): void {
 }
 
 function beginSubmit(form: HTMLElement): boolean {
-  if (!validateForm(form, false)) {
+  if (!computeValidity(form)) {
+    showAllErrors(form);
     toast('Please fix the highlighted fields before saving', 'error');
     return false;
   }
@@ -2172,9 +2404,9 @@ export function wireForms(root: HTMLElement): void {
     }
     if (t.dataset.val) {
       const spec = FORM_RULES[t.dataset.val];
-      if (spec) checkField(t, spec);
+      if (spec) checkField(t, spec, t.dataset.touched === '1');
     }
-    if (t.dataset.pw !== undefined) {
+    if (t.type === 'password' && t === form.querySelector<HTMLInputElement>('input[type="password"]')) {
       const box = form.querySelector<HTMLElement>('[data-pw-check]');
       if (box) updatePwCheck(box, (t as HTMLInputElement).value);
     }
@@ -2242,7 +2474,7 @@ export function freightFeed(loads: Consignment[], limit = 5, target = '#deliveri
     .slice(0, limit);
   return `<div class="dsh-lg-feed">${events
     .map(({ l, h }) => `<div class="dsh-lg-feed-item" data-open="${target}">
-      <span class="dsh-lg-feed-ico" style="--tg1:${l.art};background:linear-gradient(135deg,var(--dsh-surface-3),var(--dsh-surface-2))">${svg(ICON.clock)}</span>
+      <span class="dsh-lg-feed-ico">${svg(ICON.clock)}</span>
       <div class="dsh-lg-feed-body">
         <div class="dsh-lg-feed-top"><span>${l.ref} · ${h.t}</span><span class="t">${h.d.slice(0, 40)}</span></div>
         <div class="dsh-lg-feed-sub">${l.commodity} · ${l.supplier} → ${l.receiver}</div>
@@ -2261,7 +2493,9 @@ type ZdocKind = 'PO' | 'DN' | 'INV' | 'PC' | 'POD';
 const ZDOC_STYLES = `
 .z-doc{font-family:Georgia,'Times New Roman',serif;color:#111;line-height:1.5;background:#fff;margin:0 auto;max-width:760px;}
 .z-inner{padding:4px 2px;}
-.z-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:3px double #1a1a1a;padding-bottom:14px;margin-bottom:14px;}
+.z-head{display:flex;justify-content:space-between;align-items:center;gap:16px;border-bottom:3px double #1a1a1a;padding-bottom:14px;margin-bottom:14px;}
+.z-brandbox{display:flex;align-items:center;gap:14px;}
+.z-logo{width:76px;height:76px;object-fit:contain;flex:none;border-radius:10px;box-shadow:0 1px 4px rgba(0,0,0,.14);border:1px solid #e2e2da;}
 .z-brand{font-size:27px;font-weight:700;letter-spacing:.4px;color:#0f5132;}
 .z-tag{font-size:12.5px;color:#556;font-style:italic;margin-top:2px;}
 .z-addr{font-size:11.5px;color:#444;margin-top:7px;line-height:1.6;}
@@ -2331,11 +2565,11 @@ function zqty(l: Consignment): string {
   return l.qty ? (l.qty / 1000).toFixed(2) + ' t' : '—';
 }
 
-function zpriceFor(l: Consignment, party: 'supplier' | 'offtaker'): number {
+export function zpriceFor(l: Consignment, party: 'supplier' | 'offtaker'): number {
   return party === 'offtaker' ? Math.max(1, Math.round(l.unitPrice * 1.2)) : l.unitPrice;
 }
 
-function zamountFor(l: Consignment, party: 'supplier' | 'offtaker'): number {
+export function zamountFor(l: Consignment, party: 'supplier' | 'offtaker'): number {
   return l.qty ? Math.round((l.qty / 1000) * zpriceFor(l, party)) : 0;
 }
 
@@ -2375,10 +2609,13 @@ function zdocSign(label: string, sub: string): string {
 function zdocHead(m: ZdocMetaOf, num: string): string {
   return `
     <div class="z-head">
-      <div>
-        <div class="z-brand">ZVIDA Agro Traders</div>
-        <div class="z-tag">Giving Value to Your Harvest</div>
-        <div class="z-addr">5417 Cranbrook, Ruwa, Harare<br/>+263 776 571 481 · +263 717 907 738</div>
+      <div class="z-brandbox">
+        <img class="z-logo" src="/logo.jpeg" alt="ZVIDA Agro Traders" />
+        <div>
+          <div class="z-brand">ZVIDA Agro Traders</div>
+          <div class="z-tag">Giving Value to Your Harvest</div>
+          <div class="z-addr">5417 Cranbrook, Ruwa, Harare<br/>+263 776 571 481 · +263 717 907 738</div>
+        </div>
       </div>
       <div class="z-docno"><span class="z-docno-kind">${m.label}</span><span class="z-docno-num">${num}</span></div>
     </div>`;
@@ -2398,20 +2635,26 @@ function zdocShell(l: Consignment, m: ZdocMetaOf, num: string, body: string, foo
     <div class="z-foot">Issued electronically by ZVIDA Agro Traders · 5417 Cranbrook, Ruwa, Harare · +263 776 571 481 · +263 717 907 738. Valid without a wet signature unless one is required. Supplier settlement follows the agreed ${l.payTerm} terms after the second weight.</div>`;
 }
 
-function zdocPo(l: Consignment): { body: string; foot: string } {
-  const price = zpriceFor(l, 'supplier');
-  const amount = zamountFor(l, 'supplier');
+function zdocPo(l: Consignment, role: ZdocRole): { body: string; foot: string } {
+  const offtaker = role === 'receiver';
+  const party: 'supplier' | 'offtaker' = offtaker ? 'offtaker' : 'supplier';
+  const buyer = offtaker ? l.receiver : ZVIDA_COUNTERPARTY;
+  const supplier = offtaker ? ZVIDA_COUNTERPARTY : l.supplier;
+  const buyerSub = offtaker ? l.dest : '5417 Cranbrook, Ruwa, Harare';
+  const supplierSub = offtaker ? '5417 Cranbrook, Ruwa, Harare' : 'Collection: ' + l.from;
+  const price = zpriceFor(l, party);
+  const amount = zamountFor(l, party);
   const body = `
     <div class="z-parties">
-      <div><div class="z-role">Buyer</div><div class="z-name">ZVIDA Agro Traders</div><div class="z-sub">5417 Cranbrook, Ruwa, Harare</div></div>
-      <div><div class="z-role">Supplier</div><div class="z-name">${l.supplier}</div><div class="z-sub">Collection: ${l.from}</div></div>
+      <div><div class="z-role">Buyer</div><div class="z-name">${buyer}</div><div class="z-sub">${buyerSub}</div></div>
+      <div><div class="z-role">Supplier</div><div class="z-name">${supplier}</div><div class="z-sub">${supplierSub}</div></div>
     </div>
     <table class="z-table">
       <thead><tr><th>Commodity</th><th>Quantity</th><th>Rate (USD/t)</th><th class="r">Amount</th></tr></thead>
       <tbody><tr><td>${l.commodity}</td><td>${zqty(l)}</td><td>${loadMoney(price)}</td><td class="r">${l.qty ? loadMoney(amount) : '—'}</td></tr></tbody>
       <tfoot><tr><td colspan="3" class="r">Total</td><td class="r">${l.qty ? loadMoney(amount) : 'To be weighed'}</td></tr></tfoot>
     </table>
-    <div class="z-note">Delivery point: <b>${l.dest}</b> · Order <b>${l.order}</b> · PO <b>${l.poRef}</b>. This order is accepted by the supplier signing at the collection point.</div>`;
+    <div class="z-note">Delivery point: <b>${zToSub(l, role)}</b> · Order <b>${l.order}</b> · PO <b>${l.poRef}</b>. This order is accepted by the supplier signing at the collection point.</div>`;
   const foot = `
     <div class="z-signs">
       ${zdocSign('Supplier Signature', 'Accepted on collection · ID verified')}
@@ -2420,11 +2663,11 @@ function zdocPo(l: Consignment): { body: string; foot: string } {
   return { body, foot };
 }
 
-function zdocDn(l: Consignment): { body: string; foot: string } {
+function zdocDn(l: Consignment, role: ZdocRole): { body: string; foot: string } {
   const body = `
     <div class="z-parties">
-      <div><div class="z-role">From</div><div class="z-name">${l.supplier}</div><div class="z-sub">${l.from}</div></div>
-      <div><div class="z-role">To</div><div class="z-name">${l.receiver}</div><div class="z-sub">${l.dest}</div></div>
+      <div><div class="z-role">From</div><div class="z-name">${zFromName(l, role)}</div><div class="z-sub">${zFromSub(l, role)}</div></div>
+      <div><div class="z-role">To</div><div class="z-name">${zToName(l, role)}</div><div class="z-sub">${zToSub(l, role)}</div></div>
     </div>
     <div class="z-grid">
       <div><span class="z-k">Truck</span><span class="z-v">${l.truck || '—'}</span></div>
@@ -2469,11 +2712,13 @@ function zdocInv(l: Consignment, party: 'supplier' | 'offtaker'): { body: string
   return { body, foot };
 }
 
-function zdocPc(l: Consignment): { body: string; foot: string } {
-  const amount = zamountFor(l, 'supplier');
+function zdocPc(l: Consignment, role: ZdocRole): { body: string; foot: string } {
+  const party: 'supplier' | 'offtaker' = role === 'receiver' ? 'offtaker' : 'supplier';
+  const amount = zamountFor(l, party);
+  const paidTo = role === 'receiver' ? ZVIDA_COUNTERPARTY : l.supplier;
   const body = `
     <div class="z-grid">
-      <div><span class="z-k">Paid to</span><span class="z-v">${l.supplier}</span></div>
+      <div><span class="z-k">Paid to</span><span class="z-v">${paidTo}</span></div>
       <div><span class="z-k">Amount</span><span class="z-v strong">${l.qty ? loadMoney(amount) : '—'}</span></div>
       <div><span class="z-k">Method</span><span class="z-v">ZVIDA Wallet · Bank Transfer</span></div>
       <div><span class="z-k">Load</span><span class="z-v">${l.ref} · ${l.contract}</span></div>
@@ -2481,9 +2726,9 @@ function zdocPc(l: Consignment): { body: string; foot: string } {
     <div class="z-inwords"><span class="z-k">Amount in words</span><span class="z-v">${zinWords(amount)}</span></div>
     <table class="z-table">
       <thead><tr><th>Commodity</th><th>Net quantity</th><th>Rate (USD/t)</th><th class="r">Amount</th></tr></thead>
-      <tbody><tr><td>${l.commodity}</td><td>${zqty(l)}</td><td>${loadMoney(zpriceFor(l, 'supplier'))}</td><td class="r">${l.qty ? loadMoney(amount) : '—'}</td></tr></tbody>
+      <tbody><tr><td>${l.commodity}</td><td>${zqty(l)}</td><td>${loadMoney(zpriceFor(l, party))}</td><td class="r">${l.qty ? loadMoney(amount) : '—'}</td></tr></tbody>
     </table>
-    <div class="z-note">Reference <b>${l.order}</b> · released ${l.due} · ${loadTermNote(l)}. This confirms that the full amount has been released to the supplier and the contract is closed.</div>`;
+    <div class="z-note">Reference <b>${l.order}</b> · released ${l.due} · ${loadTermNote(l)}. This confirms that the full amount has been ${role === 'receiver' ? 'settled with ZVIDA' : 'released to the supplier'} and the contract is closed.</div>`;
   const foot = `
     <div class="z-signs">
       ${zdocSign('Supplier Signature', 'Payment received · balance zero')}
@@ -2521,26 +2766,38 @@ function zdocAssemble(l: Consignment, kind: ZdocKind, num: string, body: string,
   return { sheet, print, name };
 }
 
-function zdocRegister(l: Consignment): void {
+function zdocRegister(l: Consignment, role: ZdocRole = 'admin'): void {
   const put = (key: string, kind: ZdocKind, num: string, body: string, foot: string, meta: string): void => {
     const { sheet, print, name } = zdocAssemble(l, kind, num, body, foot);
     ZDOCS[key] = { key, kind, label: ZDOC_META[kind].label, name, meta, sheet, print };
     registerDownload(key, name, sheet, 'text/html');
   };
-  const po = zdocPo(l);
-  put(l.id + '-po', 'PO', znum(l, 'PO'), po.body, po.foot, `Contract ${l.contract} · ${l.commodity} · accept & sign at collection`);
-  const dn = zdocDn(l);
-  put(l.id + '-dn', 'DN', znum(l, 'DN'), dn.body, dn.foot, `Contract ${l.contract} · ${l.from} → ${l.dest} · signed on dispatch`);
-  const invS = zdocInv(l, 'supplier');
-  put(l.id + '-inv-s', 'INV', znum(l, 'INV') + '-S', invS.body, invS.foot, `Contract ${l.contract} · supplier rate ${loadMoney(zpriceFor(l, 'supplier'))}/t`);
-  const invO = zdocInv(l, 'offtaker');
-  put(l.id + '-inv-o', 'INV', znum(l, 'INV') + '-O', invO.body, invO.foot, `Contract ${l.contract} · offtaker rate ${loadMoney(zpriceFor(l, 'offtaker'))}/t`);
-  const legacyInv = ZDOCS[l.id + '-inv-o'];
-  if (legacyInv) registerDownload(l.id + '-invoice', `Invoice_${l.ref}.html`, legacyInv.sheet, 'text/html');
-  const pc = zdocPc(l);
-  put(l.id + '-pc', 'PC', znum(l, 'PC'), pc.body, pc.foot, `Contract ${l.contract} · ${loadMoney(zamountFor(l, 'supplier'))} received`);
-  const pod = zdocPod(l);
-  put(l.id + '-pod', 'POD', znum(l, 'POD'), pod.body, pod.foot, `Contract ${l.contract} · signed on delivery`);
+  if (role !== 'driver') {
+    const po = zdocPo(l, role);
+    put(l.id + '-po', 'PO', znum(l, 'PO'), po.body, po.foot, `Contract ${l.contract} · ${l.commodity} · accept & sign at collection`);
+  }
+  const dn = zdocDn(l, role);
+  put(l.id + '-dn', 'DN', znum(l, 'DN'), dn.body, dn.foot, `Contract ${l.contract} · ${zRoute(l, role)} · signed on dispatch`);
+  if (role === 'admin') {
+    const invS = zdocInv(l, 'supplier');
+    put(l.id + '-inv-s', 'INV', znum(l, 'INV') + '-S', invS.body, invS.foot, `Contract ${l.contract} · supplier rate ${loadMoney(zpriceFor(l, 'supplier'))}/t`);
+    const invO = zdocInv(l, 'offtaker');
+    put(l.id + '-inv-o', 'INV', znum(l, 'INV') + '-O', invO.body, invO.foot, `Contract ${l.contract} · offtaker rate ${loadMoney(zpriceFor(l, 'offtaker'))}/t`);
+    const legacyInv = ZDOCS[l.id + '-inv-o'];
+    if (legacyInv) registerDownload(l.id + '-invoice', `Invoice_${l.ref}.html`, legacyInv.sheet, 'text/html');
+    const pc = zdocPc(l, role);
+    put(l.id + '-pc', 'PC', znum(l, 'PC'), pc.body, pc.foot, `Contract ${l.contract} · ${loadMoney(zamountFor(l, 'supplier'))} received`);
+  } else if (role !== 'driver') {
+    const side: 'supplier' | 'offtaker' = role === 'receiver' ? 'offtaker' : 'supplier';
+    const inv = zdocInv(l, side);
+    put(l.id + '-inv-' + (role === 'receiver' ? 'o' : 's'), 'INV', znum(l, 'INV') + (role === 'receiver' ? '-O' : '-S'), inv.body, inv.foot, `Contract ${l.contract} · rate ${loadMoney(zpriceFor(l, side))}/t`);
+    const pc = zdocPc(l, role);
+    put(l.id + '-pc', 'PC', znum(l, 'PC'), pc.body, pc.foot, `Contract ${l.contract} · ${loadMoney(zamountFor(l, side))} settled`);
+  }
+  if (role === 'driver' || role === 'admin') {
+    const pod = zdocPod(l);
+    put(l.id + '-pod', 'POD', znum(l, 'POD'), pod.body, pod.foot, `Contract ${l.contract} · signed on delivery`);
+  }
 }
 
 function zdocAvail(l: Consignment, role: ZdocRole): ZdocKind[] {
@@ -2566,7 +2823,7 @@ function zdocBtn(label: string, key: string): string {
 }
 
 function zdocPills(l: Consignment, role: ZdocRole): string {
-  zdocRegister(l);
+  zdocRegister(l, role);
   const kinds = zdocAvail(l, role);
   if (!kinds.length) return '';
   const btns: string[] = [];
@@ -2630,7 +2887,7 @@ function zdocCollectKeys(loads: Consignment[], role: ZdocRole): string[] {
 
 export function zdocDocuments(role: ZdocRole, who = ''): string {
   const loads = zdocLoads(role, who);
-  loads.forEach((l) => zdocRegister(l));
+  loads.forEach((l) => zdocRegister(l, role));
   const rows = zdocRows(loads, role);
   const groups = new Map<string, { l: Consignment; keys: { label: string; key: string }[] }[]>();
   for (const r of rows) {
@@ -2703,7 +2960,7 @@ export function wireZdoc(): void {
   JS.zdocAll = (payload) => {
     const [role, who] = payload.split('|');
     const loads = zdocLoads(role as ZdocRole, who);
-    loads.forEach((l) => zdocRegister(l));
+    loads.forEach((l) => zdocRegister(l, role as ZdocRole));
     const keys = zdocCollectKeys(loads, role as ZdocRole);
     keys.forEach((key, i) => window.setTimeout(() => downloadNow(key), i * 160));
     toast(`Downloading ${keys.length} documents`);
@@ -2754,18 +3011,18 @@ function lgFoot(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admi
   return '';
 }
 
-export function loadCard(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admin' = 'supplier'): string {
+export function loadCard(l: Consignment, role: LoadRole = 'supplier'): string {
   const st = lgWrap(l.status);
   const head = `${l.ref} · ${l.commodity}`;
   const meta = `
     <div class="dsh-lg-meta-row">
-      <span>${svg(ICON.route)} ${l.from} → ${l.dest}</span>
+      <span>${svg(ICON.route)} ${zRoute(l, role)}</span>
       <span>${svg(ICON.truck)} ${l.driver || 'No driver assigned'} · ${l.truck || '—'}</span>
       <span>${svg(ICON.contracts)} ${l.contract} · ${l.poRef} · ${l.order}</span>
     </div>
     <div class="dsh-lg-meta-row">
-      <span>${svg(ICON.users)} Supplier: ${l.supplier}</span>
-      <span>${svg(ICON.buy)} Receiver: ${l.receiver}</span>
+      <span>${svg(ICON.users)} Supplier: ${zFromName(l, role)}</span>
+      <span>${svg(ICON.buy)} Receiver: ${zToName(l, role)}</span>
       <span>${svg(ICON.weighbridge)} ${l.weightMode === 'weighbridge' ? 'Weighbridge' : 'Scale · ' + l.bucketKg + ' kg bucket'}</span>
     </div>`;
   return `<div class="dsh-lg-card" data-live-card="${l.id}" data-lg-role="${role}">
@@ -2780,9 +3037,9 @@ export function loadCard(l: Consignment, role: 'supplier' | 'driver' | 'receiver
     ${meta}
     ${loadSteps(l)}
     ${loadProgressBar(l)}
-    ${loadTele(l)}
+    ${loadTele(l, role)}
     ${loadWeights(l)}
-    ${loadAmount(l)}
+    ${loadAmount(l, role)}
     ${lgFoot(l, role)}
   </div>`;
 }
@@ -2861,7 +3118,17 @@ export function wireFreight(): void {
     downloadNow(id + '-' + type);
     toast('Document downloaded', 'info');
   };
-  JS.lgPhoto = () => toast('Photo captured — attached to the load record', 'info');
+  JS.lgPhoto = (url, btn) => {
+    const card = btn?.closest<HTMLElement>('[data-live-card]');
+    const id = card?.getAttribute('data-live-card') || '';
+    const l = load(id);
+    if (!l) return;
+    l.photos = l.photos || [];
+    l.photos.push(url);
+    l.pics = (l.pics || 0) + 1;
+    lgSave();
+    void persistLoad(l as unknown as LiveLoad);
+  };
 
   if (freightLiveTimer === null) {
     freightLiveTimer = window.setInterval(() => {
@@ -2891,8 +3158,26 @@ export function isLiveMode(): boolean {
   return liveMode;
 }
 
-async function hydrateLive(): Promise<void> {
+/* Identity of the signed-in real account, used to scope dashboards to their
+   own rows instead of the demo personas' seeded names. */
+export function liveUserId(): string {
+  const a = getLiveAccount();
+  return a && !a.isDemo ? a.id : '';
+}
+
+export function liveUserName(): string {
+  const a = getLiveAccount();
+  return a && !a.isDemo ? a.name : '';
+}
+
+export async function hydrateLive(): Promise<void> {
   try {
+    /* A real account must never fall back to demo seed data, so clear the
+       local demo stores before anything loads. Empty DB → empty dashboards. */
+    if (liveConfigured()) {
+      localStorage.removeItem(MK_KEY);
+      localStorage.removeItem(LG_KEY);
+    }
     const m = mkLoad()!;
     const f = lgLoad()!;
     const live = await syncAll({
@@ -2901,32 +3186,25 @@ async function hydrateLive(): Promise<void> {
       orderSeq: m.seq,
       loads: f.loads,
       loadSeq: f.seq,
+      rfqs: m.rfqs,
     });
     document.querySelectorAll('[data-offline]').forEach((el) => el.remove());
     if (!live) return;
-    let changed = false;
-    if (live.products.length) {
-      m.cat = live.products as unknown as MarketProduct[];
-      changed = true;
+    liveMode = true;
+    m.cat = mergeCatalog(live.products as unknown as MarketProduct[], zvidaGoods());
+    m.orders = live.orders as unknown as MarketOrder[];
+    m.seq = live.orderSeq;
+    m.rfqs = live.rfqs as unknown as LiveRfq[];
+    f.loads = live.loads as unknown as Consignment[];
+    f.seq = live.loadSeq;
+    mkSave();
+    lgSave();
+    const badge = document.querySelector('.dsh-live-badge');
+    if (badge) {
+      badge.textContent = 'LIVE';
+      badge.classList.add('on');
     }
-    if (live.orders.length) {
-      m.orders = live.orders as unknown as MarketOrder[];
-      m.seq = live.orderSeq;
-      changed = true;
-    }
-    if (live.loads.length) {
-      f.loads = live.loads as unknown as Consignment[];
-      f.seq = live.loadSeq;
-      changed = true;
-    }
-    if (changed) {
-      liveMode = true;
-      mkSave();
-      lgSave();
-      const badge = document.querySelector('.dsh-live-badge');
-      if (badge) badge.textContent = 'LIVE';
-      refresh();
-    }
+    refresh();
   } catch {
     const badge = document.querySelector('.dsh-live-badge');
     if (badge) badge.textContent = 'OFFLINE';
@@ -2934,12 +3212,373 @@ async function hydrateLive(): Promise<void> {
     if (root && !root.querySelector('[data-offline]')) {
       root.insertAdjacentHTML('afterbegin', `<div data-offline>${errorState({
         title: 'Could not connect to ZVIDA',
-        message: 'Your internet connection dropped, so you are viewing saved demo data. Live orders, loads and market prices will refresh once you are back online.',
+        message: 'Your internet connection dropped, so your saved data is not refreshing. Orders, loads and market prices will update once you are back online.',
         retry: true,
       })}</div>`);
     }
   }
 }
+
+/* Granular live refetch — realtime events name the table that changed, so each
+   one re-hydrates only the store it feeds instead of a full syncAll. */
+const TABLE_REFRESH: Record<string, () => Promise<void>> = {
+  listings: refreshLiveCatalog,
+  market_orders: refreshLiveOrders,
+  contracts: refreshLiveLoads,
+  deliveries: refreshLiveLoads,
+  rfqs: refreshLiveRfqs,
+  notifications: async () => {},
+  payments: async () => {},
+  messages: async () => {},
+};
+
+export async function hydrateTables(tables: string[]): Promise<void> {
+  const seen = new Set<string>();
+  for (const t of tables) {
+    if (seen.has(t)) continue;
+    seen.add(t);
+    const fn = TABLE_REFRESH[t];
+    if (fn) await fn();
+  }
+  if (seen.size) refresh();
+}
+
+async function refreshLiveCatalog(): Promise<void> {
+  try {
+    const m = mkLoad()!;
+    const live = await fetchProducts();
+    m.cat = mergeCatalog(live as unknown as MarketProduct[], zvidaGoods());
+    mkSave();
+  } catch { /* ignore */ }
+}
+
+async function refreshLiveOrders(): Promise<void> {
+  try {
+    const m = mkLoad()!;
+    const o = await fetchOrders();
+    m.orders = o.orders as unknown as MarketOrder[];
+    m.seq = o.seq;
+    mkSave();
+  } catch { /* ignore */ }
+}
+
+async function refreshLiveLoads(): Promise<void> {
+  try {
+    const f = lgLoad()!;
+    const l = await fetchLoads();
+    f.loads = l.loads as unknown as Consignment[];
+    f.seq = l.seq;
+    lgSave();
+  } catch { /* ignore */ }
+}
+
+async function refreshLiveRfqs(): Promise<void> {
+  try {
+    const m = mkLoad()!;
+    const [open, mine] = await Promise.all([fetchOpenRfqs(), fetchMyRfqs()]);
+    const seen = new Set<string>();
+    m.rfqs = [...mine, ...open].filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
+    mkSave();
+  } catch { /* ignore */ }
+}
+
+/* ============================================================
+   Shell upgrades v2.5 — theme, command palette, popovers,
+   notification center, keyboard shortcuts, a11y
+   ============================================================ */
+
+type ThemePref = 'light' | 'dark' | 'system';
+const THEME_KEY = 'zvd-theme';
+let themePref: ThemePref = 'system';
+let currentTheme: 'light' | 'dark' = 'light';
+let appEl: HTMLElement | null = null;
+let paletteEl: HTMLElement | null = null;
+let activePop: { btn: HTMLElement; panel: HTMLElement } | null = null;
+
+function systemTheme(): 'light' | 'dark' {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+function resolveTheme(p: ThemePref): 'light' | 'dark' { return p === 'system' ? systemTheme() : p; }
+function loadThemePref(): ThemePref {
+  try {
+    const t = localStorage.getItem(THEME_KEY);
+    if (t === 'light' || t === 'dark' || t === 'system') return t;
+  } catch { /* ignore */ }
+  return 'system';
+}
+function setTheme(p: ThemePref): void {
+  themePref = p;
+  try { localStorage.setItem(THEME_KEY, p); } catch { /* ignore */ }
+  currentTheme = resolveTheme(p);
+  document.documentElement.setAttribute('data-theme', currentTheme);
+  appEl?.setAttribute('data-theme', currentTheme);
+  document.querySelectorAll<HTMLElement>('[data-theme-check]').forEach((el) => {
+    el.style.display = el.getAttribute('data-theme-check') === themePref ? 'inline-flex' : 'none';
+  });
+}
+
+/* ---------- Popovers / menus ---------- */
+function closeAllPops(): void {
+  if (activePop) {
+    activePop.panel.classList.remove('open');
+    activePop.btn.classList.remove('open');
+    activePop.btn.setAttribute('aria-expanded', 'false');
+    activePop = null;
+  }
+}
+function togglePop(btn: HTMLElement, panel: HTMLElement): void {
+  if (activePop && activePop.btn === btn) { closeAllPops(); return; }
+  closeAllPops();
+  panel.classList.add('open');
+  btn.classList.add('open');
+  btn.setAttribute('aria-expanded', 'true');
+  activePop = { btn, panel };
+}
+document.addEventListener('click', (e) => {
+  if (!activePop) return;
+  const t = e.target as Node;
+  if (activePop.btn.contains(t) || activePop.panel.contains(t)) return;
+  closeAllPops();
+});
+
+/* ---------- Notification dropdown ---------- */
+let lastNotifs: { id: string; title: string; body?: string; type: string; read: boolean; created_at?: string }[] = [];
+
+function notifIcon(type: string): string {
+  switch (type) {
+    case 'contract': return ICON.contracts;
+    case 'delivery': return ICON.deliveries;
+    case 'message': return ICON.messages;
+    case 'payment': return ICON.payments;
+    case 'price': return ICON.trendingUp;
+    case 'dispute': return ICON.disputes;
+    default: return ICON.bell;
+  }
+}
+function timeAgo(iso?: string): string {
+  if (!iso) return '';
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  if (s < 604800) return `${Math.floor(s / 86400)}d ago`;
+  return new Date(iso).toLocaleDateString();
+}
+function demoNotifs(): { id: string; title: string; body?: string; type: string; read: boolean; created_at?: string }[] {
+  const ago = (m: number) => new Date(Date.now() - m * 60000).toISOString();
+  return [
+    { id: 'd1', title: 'Market prices updated', body: 'Maize grain is now US$230/t — your listings auto-refresh.', type: 'price', read: false, created_at: ago(25) },
+    { id: 'd2', title: 'Your contract is ready', body: 'Contract ZV-DEMO-1 for 10 t of maize awaits your review.', type: 'contract', read: false, created_at: ago(95) },
+    { id: 'd3', title: 'New support reply', body: 'Dispatch replied to your ticket #1023.', type: 'message', read: false, created_at: ago(160) },
+  ];
+}
+function renderNotifList(panel: HTMLElement, items: { id: string; title: string; body?: string; type: string; read: boolean; created_at?: string }[]): void {
+  const list = panel.querySelector<HTMLElement>('[data-notif-list]');
+  if (!list) return;
+  if (!items.length) {
+    list.innerHTML = `<div class="dsh-notif-empty">${svg(ICON.bell)}<b>All caught up</b><span>New notifications will appear here.</span></div>`;
+    return;
+  }
+  list.innerHTML = items.map((n) => `
+    <div class="dsh-notif-item ${n.read ? '' : 'unread'}">
+      <span class="dsh-notif-ico">${svg(notifIcon(n.type))}</span>
+      <span class="dsh-notif-body">
+        <span class="dsh-notif-text">${String(n.title).replace(/</g, '&lt;')}</span>
+        ${n.body ? `<span class="dsh-notif-sub">${String(n.body).replace(/</g, '&lt;')}</span>` : ''}
+      </span>
+      <span class="dsh-notif-time">${timeAgo(n.created_at)}</span>
+      ${n.read ? '' : '<span class="dsh-notif-dot"></span>'}
+    </div>`).join('');
+}
+
+/* ---------- User menu ---------- */
+function userMenuItemsHtml(isDemo: boolean): string {
+  const themeRows = ([['light', 'Light', ICON.sun], ['dark', 'Dark', ICON.moon], ['system', 'System', ICON.monitor]] as const).map(([k, label, icon]) => `
+    <button type="button" class="dsh-pop-item" data-theme-opt="${k}">
+      ${svg(icon)}<span class="grow"><span>${label}</span></span>
+      <span class="check" data-theme-check="${k}">${svg(ICON.check)}</span>
+    </button>`).join('');
+  return `
+    <button type="button" class="dsh-pop-item" data-action="settings">
+      ${svg(ICON.settings)}<span class="grow"><span>Account settings</span><span class="dsh-pop-sub">Profile, verification, payouts</span></span>
+    </button>
+    <div class="dsh-pop-sep"></div>
+    <div class="dsh-pop-head">Appearance</div>
+    ${themeRows}
+    ${isDemo ? `
+    <div class="dsh-pop-sep"></div>
+    <button type="button" class="dsh-pop-item" data-action="reset-demo">
+      ${svg(ICON.refresh)}<span class="grow"><span>Reset demo data</span><span class="dsh-pop-sub">Restore the sample dataset</span></span>
+    </button>` : ''}
+    <div class="dsh-pop-sep"></div>
+    <button type="button" class="dsh-pop-item danger" data-action="signout">
+      ${svg(ICON.logout)}<span class="grow"><span>Sign out</span></span>
+    </button>`;
+}
+
+/* ---------- Command palette ---------- */
+interface PaletteQuickAction { icon: string; name: string; desc: string; run: () => void }
+type PaletteRow = { icon: string; name: string; desc: string; text: string; run: () => void };
+interface PaletteState {
+  items: { el: HTMLElement; run: () => void; text: string }[];
+  groups: Map<HTMLElement, HTMLElement[]>;
+  live: { gEl: HTMLElement; els: HTMLElement[]; rows: () => PaletteRow[] };
+}
+let paletteState: PaletteState | null = null;
+let paletteActiveIdx = 0;
+
+function visiblePaletteItems(): { el: HTMLElement; run: () => void }[] {
+  return paletteState ? paletteState.items.filter((i) => i.el.style.display !== 'none') : [];
+}
+function movePaletteActive(dir: number): void {
+  const vis = visiblePaletteItems();
+  if (!vis.length) return;
+  paletteActiveIdx = (paletteActiveIdx + dir + vis.length) % vis.length;
+  vis.forEach((i, idx) => i.el.classList.toggle('active', idx === paletteActiveIdx));
+  vis[paletteActiveIdx].el.scrollIntoView({ block: 'nearest' });
+}
+function refreshLiveGroup(qq: string): { el: HTMLElement; run: () => void; text: string }[] {
+  if (!paletteState) return [];
+  const { gEl, rows } = paletteState.live;
+  while (gEl.nextSibling) gEl.nextSibling.remove();
+  const matches = qq ? rows().filter((r) => r.text.includes(qq)).slice(0, 25) : [];
+  const items = matches.map((it) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'dsh-palette-item';
+    btn.innerHTML = `<span class="dsh-palette-ico">${svg(it.icon)}</span>
+      <span class="dsh-palette-main"><span class="dsh-palette-name">${it.name}</span><span class="dsh-palette-desc">${it.desc}</span></span>`;
+    btn.addEventListener('click', () => { closePalette(); it.run(); });
+    gEl.after(btn);
+    return { el: btn, run: it.run, text: it.text };
+  });
+  paletteState.live.els = items.map((i) => i.el);
+  gEl.style.display = items.length ? '' : 'none';
+  return items;
+}
+function filterPalette(q: string): void {
+  if (!paletteState) return;
+  const qq = q.trim().toLowerCase();
+  const staticItems = [...paletteState.groups.values()].flat().map((el) => paletteState!.items.find((i) => i.el === el)!).filter(Boolean);
+  paletteState.items = [...staticItems, ...refreshLiveGroup(qq)];
+  paletteState.groups.forEach((children, gEl) => {
+    let any = false;
+    for (const c of children) {
+      const info = paletteState!.items.find((i) => i.el === c);
+      const show = !qq || (info ? info.text.includes(qq) : false);
+      c.style.display = show ? '' : 'none';
+      if (show) any = true;
+    }
+    gEl.style.display = any ? '' : 'none';
+  });
+  paletteState.items.forEach((i) => i.el.classList.remove('active'));
+  paletteActiveIdx = 0;
+  const first = paletteState.items.find((i) => i.el.style.display !== 'none');
+  if (first) first.el.classList.add('active');
+}
+function buildPalette(cfg: RoleCfg, quick: PaletteQuickAction[], liveRows: () => PaletteRow[]): void {
+  if (!paletteEl) return;
+  const results = paletteEl.querySelector<HTMLElement>('[data-palette-results]');
+  if (!results) return;
+  results.innerHTML = '';
+  paletteState = { items: [], groups: new Map(), live: { gEl: document.createElement('div'), els: [], rows: liveRows } };
+  const addGroup = (label: string, rows: { icon: string; name: string; desc: string; run: () => void }[]) => {
+    const gEl = document.createElement('div');
+    gEl.className = 'dsh-palette-group';
+    gEl.textContent = label;
+    results.appendChild(gEl);
+    const children: HTMLElement[] = [];
+    for (const it of rows) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dsh-palette-item';
+      btn.innerHTML = `<span class="dsh-palette-ico">${svg(it.icon)}</span>
+        <span class="dsh-palette-main"><span class="dsh-palette-name">${it.name}</span><span class="dsh-palette-desc">${it.desc}</span></span>`;
+      btn.addEventListener('click', () => { closePalette(); it.run(); });
+      results.appendChild(btn);
+      paletteState!.items.push({ el: btn, run: it.run, text: `${it.name} ${it.desc}`.toLowerCase() });
+      children.push(btn);
+    }
+    gEl.style.display = children.length ? '' : 'none';
+    paletteState!.groups.set(gEl, children);
+  };
+  addGroup('Pages', cfg.pages.filter((p) => !p.hidden).map((p) => ({
+    icon: p.icon,
+    name: p.label,
+    desc: p.sub || cfg.roleLabel,
+    run: () => { window.location.hash = '#' + p.id; },
+  })));
+  addGroup('Quick actions', quick);
+  const liveGEl = document.createElement('div');
+  liveGEl.className = 'dsh-palette-group';
+  liveGEl.textContent = 'Live results';
+  liveGEl.style.display = 'none';
+  results.appendChild(liveGEl);
+  paletteState.live.gEl = liveGEl;
+}
+function initPalette(cfg: RoleCfg, quick: PaletteQuickAction[], liveRows: () => PaletteRow[]): void {
+  if (!appEl || appEl.querySelector('[data-palette]')) return;
+  const mask = document.createElement('div');
+  mask.className = 'dsh-palette-mask';
+  mask.setAttribute('data-palette', '');
+  mask.innerHTML = `
+    <div class="dsh-palette" role="dialog" aria-modal="true" aria-label="Search ZVIDA">
+      <div class="dsh-palette-input">
+        ${svg(ICON.search)}
+        <input type="text" placeholder="Search pages, orders, loads, products…" autocomplete="off" spellcheck="false" aria-label="Search" />
+        <kbd class="dsh-kbd">esc</kbd>
+      </div>
+      <div class="dsh-palette-results" data-palette-results></div>
+      <div class="dsh-palette-foot">
+        <span><kbd class="dsh-kbd">↑</kbd><kbd class="dsh-kbd">↓</kbd> navigate</span>
+        <span class="sp"></span>
+        <span><kbd class="dsh-kbd">↵</kbd> select · <kbd class="dsh-kbd">esc</kbd> close</span>
+      </div>
+    </div>`;
+  appEl.appendChild(mask);
+  paletteEl = mask;
+  buildPalette(cfg, quick, liveRows);
+  const input = mask.querySelector<HTMLInputElement>('.dsh-palette-input input');
+  input?.addEventListener('input', () => filterPalette(input.value));
+  mask.addEventListener('click', (e) => { if (e.target === mask) closePalette(); });
+  mask.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); movePaletteActive(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); movePaletteActive(-1); }
+    else if (e.key === 'Enter') { e.preventDefault(); visiblePaletteItems()[paletteActiveIdx]?.run(); }
+    else if (e.key === 'Escape') { e.preventDefault(); closePalette(); }
+  });
+}
+function openPalette(): void {
+  if (!paletteEl) return;
+  closeAllPops();
+  filterPalette('');
+  paletteEl.classList.add('open');
+  document.body.classList.add('dsh-no-scroll');
+  const input = paletteEl.querySelector<HTMLInputElement>('.dsh-palette-input input');
+  requestAnimationFrame(() => input?.focus());
+}
+function closePalette(): void {
+  if (!paletteEl) return;
+  paletteEl.classList.remove('open');
+  document.body.classList.remove('dsh-no-scroll');
+}
+
+/* Global keyboard shortcuts: Ctrl/Cmd+K or "/" open the palette. */
+document.addEventListener('keydown', (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+    e.preventDefault();
+    openPalette();
+    return;
+  }
+  const target = e.target as HTMLElement | null;
+  const typing = Boolean(target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable));
+  if (!typing && e.key === '/') {
+    e.preventDefault();
+    openPalette();
+    return;
+  }
+  if (e.key === 'Escape') closeAllPops();
+});
 
 /* ---------- Boot ---------- */
 /* ---------- Sidebar nav ---------- */
@@ -2957,14 +3596,272 @@ function navHtml(cfg: RoleCfg): string {
   return html;
 }
 
+/* ---------- New-account empty state (everything except marketplace + forms) ---------- */
+const EMPTY_CTA: Record<string, { label: string; href: string; toast: string }> = {
+  farmer: { label: 'Browse the shop', href: '#shop', toast: 'Opening the input store' },
+  offtaker: { label: 'Browse the shop', href: '#shop', toast: 'Opening the input store' },
+  vendor: { label: 'Add a product', href: '#listings', toast: 'Opening the product form' },
+  driver: { label: 'Contact dispatch', href: '#support', toast: 'Opening driver support' },
+  zvida: { label: 'Open the marketplace', href: '#marketplace', toast: 'Opening the marketplace' },
+  support: { label: 'Refresh', href: '#inbox', toast: 'Refreshing' },
+};
+
+const EMPTY_HINTS: Record<string, string> = {
+  today: 'Your daily overview — active contracts, loads, orders and payouts — will appear here once your first deal moves.',
+  contracts: 'When ZVIDA issues a contract for your harvest, the load pipeline, weighbridge steps and settlements will appear here.',
+  deliveries: 'Consignments, weighbridge progress and settled deals will appear here as soon as activity begins.',
+  finance: 'Payouts, invoices and your transaction history will appear here after your first deal.',
+  perf: 'Your reliability score, ratings and delivery record will appear here after your first deal.',
+  documents: 'Invoices, weighbridge certificates and receipts will be filed here automatically as you trade.',
+  farm: 'Your farm profile, crop diary and equipment register will appear here once you fill them in.',
+  quality: 'Inspection reports and quality certificates for inbound loads will appear here.',
+  warehouse: 'Your warehouse inventory, receipts and storage capacity will appear here once you add stock.',
+  inventory: 'Your product stock levels will appear here once you list your first product.',
+  dispatch: 'When ZVIDA places dispatch orders, your consignment queue will appear here.',
+  trips: 'Consignments assigned to you will appear here, ready to start, with weighbridge and GPS steps.',
+  earnings: 'Trip earnings and payout deposits will appear here once you complete your first trip.',
+  control: 'Once the first listing is approved and matched, live operations, spreads and risk flags will show here.',
+  listings: 'Listings submitted for approval will appear here for you to review.',
+  matches: 'Anonymous supplier listings and offtaker RFQs will appear here for blind matching.',
+  disputes: 'Quality and payment disputes will appear here for resolution.',
+  payments: 'Pending and released payments will appear here as contracts settle.',
+  reports: 'Operational and financial reports will appear here as activity grows.',
+  inbox: 'Support tickets from farmers, vendors and offtakers will appear here.',
+  tickets: 'Every support ticket raised on ZVIDAMBANO will appear here.',
+  users: 'Signed-up users will appear here as they join ZVIDAMBANO.',
+};
+
+const EMPTY_ART: Record<string, string> = {
+  today: 'farm',
+  contracts: 'grain',
+  deliveries: 'truck',
+  finance: 'money',
+  perf: 'shield2',
+  documents: 'seed',
+  farm: 'farm',
+  quality: 'scan',
+  warehouse: 'silo',
+  inventory: 'box',
+  dispatch: 'truck',
+  trips: 'route',
+  earnings: 'money',
+  control: 'factory',
+  listings: 'grain',
+  matches: 'seed',
+  disputes: 'shield2',
+  payments: 'money',
+  reports: 'factory',
+  inbox: 'support',
+  tickets: 'support',
+  users: 'seed',
+  _role_farmer: 'farm',
+  _role_vendor: 'truck',
+  _role_offtaker: 'silo',
+  _role_driver: 'truck',
+  _role_zvida: 'factory',
+  _role_support: 'support',
+};
+
+/* ---------- New-account onboarding checklist (real accounts only) ---------- */
+export interface OnboardStats {
+  orders: number;
+  loads: number;
+  listings: number;
+  rfqs: number;
+  verified: boolean;
+}
+
+interface OnboardTask {
+  icon: string;
+  label: string;
+  hint: string;
+  done: (s: OnboardStats) => boolean;
+  cta?: { label: string; href?: string; toast?: string };
+}
+
+const ONBOARD_DISMISS_KEY = 'zvd-onboard-dismissed';
+
+function onboardDismissed(cfg: RoleCfg, s?: DashboardSession): boolean {
+  if (!s) return false;
+  try {
+    const list: string[] = JSON.parse(localStorage.getItem(ONBOARD_DISMISS_KEY) || '[]');
+    return list.includes(`${cfg.key}:${s.id}`);
+  } catch {
+    return false;
+  }
+}
+
+const VERIFY_TASK: OnboardTask = {
+  icon: ICON.shield,
+  label: 'Verify your email',
+  hint: 'Confirm the link we emailed you — this unlocks payouts and live trading',
+  done: (s) => s.verified,
+  cta: { label: 'Resend link', toast: 'Verification email sent — check your inbox' },
+};
+
+const ONBOARD_TASKS: Record<string, OnboardTask[]> = {
+  farmer: [
+    VERIFY_TASK,
+    { icon: ICON.sell, label: 'List your first harvest', hint: 'Post grain or produce and ZVIDA matches it to buyers', done: (s) => s.listings > 0, cta: { label: 'List now', href: '#sell', toast: 'Opening the listing form' } },
+    { icon: ICON.shop, label: 'Place your first order', hint: 'Buy inputs from vendors on the ZVIDAMBANO store', done: (s) => s.orders > 0, cta: { label: 'Shop inputs', href: '#shop', toast: 'Opening the input store' } },
+  ],
+  vendor: [
+    VERIFY_TASK,
+    { icon: ICON.listings, label: 'Add your first product', hint: 'Put your catalogue live for ZVIDA customers to order', done: (s) => s.listings > 0, cta: { label: 'Add product', href: '#listings', toast: 'Opening the product form' } },
+    { icon: ICON.orders, label: 'Dispatch your first order', hint: 'Confirm and ship an order to a ZVIDA customer', done: (s) => s.orders > 0, cta: { label: 'View orders', href: '#orders', toast: 'Opening orders' } },
+  ],
+  offtaker: [
+    VERIFY_TASK,
+    { icon: ICON.buy, label: 'Post a purchase request', hint: 'Tell ZVIDA what you need — RFQs are matched to suppliers', done: (s) => s.rfqs > 0, cta: { label: 'Post an RFQ', href: '#buy', toast: 'Opening the buy page' } },
+    { icon: ICON.deliveries, label: 'Receive your first delivery', hint: 'Suppliers dispatch to you through the ZVIDA pipeline', done: (s) => s.loads > 0, cta: { label: 'View deliveries', href: '#deliveries', toast: 'Opening deliveries' } },
+  ],
+  driver: [
+    VERIFY_TASK,
+    { icon: ICON.trips, label: 'Complete your first trip', hint: 'Pick up an assigned consignment, weigh it and deliver', done: (s) => s.loads > 0, cta: { label: 'View trips', href: '#trips', toast: 'Opening trips' } },
+  ],
+  zvida: [
+    VERIFY_TASK,
+    { icon: ICON.listings, label: 'Review the first listing', hint: 'Approve supplier listings so they go live for buyers', done: (s) => s.listings > 0, cta: { label: 'Review listings', href: '#listings', toast: 'Opening listings' } },
+    { icon: ICON.contracts, label: 'Approve the first contract', hint: 'Match an RFQ to a listing and issue the contract', done: (s) => s.loads > 0, cta: { label: 'Open matching', href: '#matches', toast: 'Opening matching' } },
+  ],
+  support: [
+    VERIFY_TASK,
+    { icon: ICON.messages, label: 'Resolve the first ticket', hint: 'Farmers, vendors and offtakers raise tickets here', done: () => false, cta: { label: 'Open inbox', href: '#inbox', toast: 'Opening the inbox' } },
+  ],
+};
+
+function onboardStats(cfg: RoleCfg, s?: DashboardSession): OnboardStats {
+  const m = mkLoad()!;
+  const f = lgLoad()!;
+  return {
+    orders: marketMyOrders().length,
+    loads: f.loads.length,
+    listings: s ? marketCatalog(s.name).length : 0,
+    rfqs: s ? m.rfqs.filter((r) => r.offtakerId === s.id).length : 0,
+    verified: Boolean(s?.isVerified),
+  };
+}
+
+function onboardingHtml(cfg: RoleCfg, s: DashboardSession | undefined, stats: OnboardStats): string {
+  if (onboardDismissed(cfg, s)) return '';
+  const tasks = (ONBOARD_TASKS[cfg.key] || []).filter(Boolean);
+  const total = tasks.length;
+  const done = tasks.filter((t) => t.done(stats)).length;
+  const pct = total ? Math.round((done / total) * 100) : 100;
+  const firstName = (s?.name || cfg.name || 'there').trim().split(/\s+/)[0] || 'there';
+  const home = `#${cfg.pages[0].id}`;
+  const dismiss = `<button type="button" class="dsh-onboard-dismiss" data-onboard-dismiss aria-label="Dismiss onboarding" title="Dismiss">${svg(ICON.x)}</button>`;
+  if (total > 0 && done === total) {
+    return `<div class="dsh-onboard ok" data-onboard>
+      ${dismiss}
+      <span class="dsh-onboard-ok-ico">${svg(ICON.check)}</span>
+      <div class="dsh-onboard-ok-body">
+        <div class="dsh-onboard-ok-title">You're all set, ${firstName}</div>
+        <div class="dsh-onboard-ok-sub">Your ${cfg.roleLabel} workspace is live — ZVIDA will notify you the moment a match or order lands.</div>
+      </div>
+      ${btn('Go to my workspace', 'ghost sm', 'Opening your workspace', home)}
+    </div>`;
+  }
+  const rows = tasks
+    .map((t) => {
+      const isDone = t.done(stats);
+      const end = isDone ? pill('Done', 'green') : t.cta ? btn(t.cta.label, 'primary sm', t.cta.toast || t.cta.label, t.cta.href || undefined) : '';
+      return `<div class="dsh-onboard-task ${isDone ? 'done' : ''}">
+        <span class="dsh-onboard-task-ico">${svg(isDone ? ICON.check : t.icon)}</span>
+        <div class="dsh-onboard-task-body">
+          <div class="dsh-onboard-task-title">${t.label}</div>
+          <div class="dsh-onboard-task-sub">${t.hint}</div>
+        </div>
+        <span class="dsh-onboard-task-end">${end}</span>
+      </div>`;
+    })
+    .join('');
+  return `<div class="dsh-onboard" data-onboard>
+    <div class="dsh-onboard-main">
+      <div class="dsh-onboard-head">
+        <span class="dsh-onboard-kick">${cfg.roleLabel} workspace · ${done} of ${total} steps</span>
+        <h3>Welcome to ZVIDAMBANO, ${firstName}</h3>
+        <p>Finish these steps to unlock live trading. Your data stays private to you until you act.</p>
+      </div>
+      <div class="dsh-onboard-tasks">${rows}</div>
+    </div>
+    <aside class="dsh-onboard-side">
+      ${dismiss}
+      ${ring(pct, `${done}/${total}`, 92)}
+      <div class="dsh-onboard-side-title">${pct >= 60 ? 'Nearly there' : 'Getting started'}</div>
+      <div class="dsh-onboard-side-sub">${pct >= 60 ? 'Finish the last steps and ZVIDA can start matching you.' : 'Complete each step to unlock the live pipeline.'}</div>
+    </aside>
+  </div>`;
+}
+
+function emptyAccountPage(cfg: RoleCfg, page: PageCfg, s: DashboardSession | undefined, stats: OnboardStats): string {
+  const cta = EMPTY_CTA[cfg.key] || { label: 'Refresh', href: '#today', toast: 'Refreshing' };
+  const art = EMPTY_ART[page.id] || EMPTY_ART['_role_' + cfg.key] || 'seed';
+  const hint = EMPTY_HINTS[page.id] || `${page.title} will fill in automatically as you use ZVIDAMBANO.`;
+  return `<div data-empty-account>
+    ${onboardingHtml(cfg, s, stats)}
+    ${emptyState({
+      art,
+      icon: page.icon,
+      kick: page.title,
+      title: 'Nothing here yet',
+      sub: hint,
+      action: cta.label,
+      actionToast: cta.toast,
+      actionHref: cta.href,
+      hint: 'Start with a task above — the moment your first deal moves, this page comes alive.',
+    })}
+  </div>`;
+}
+
+/* ---------- Notification centre (reachable via the bell → "View all") ---------- */
+function notificationsPageHtml(cfg: RoleCfg): string {
+  const items = isLiveMode() ? lastNotifs : demoNotifs();
+  const body = items.length
+    ? items
+        .map((n) =>
+          listRow(notifIcon(n.type), n.title, n.body || n.type, timeAgo(n.created_at || ''), 'plain', true)
+        )
+        .join('')
+    : emptyState({
+        icon: ICON.bell,
+        art: 'seed',
+        title: 'No notifications yet',
+        sub: 'Order updates, contract alerts and payout notices will land here as you trade.',
+      });
+  return `${sec('Notifications')}
+    ${panel({ body, flush: true })}
+    ${banner('info', 'Live updates also arrive in the bell in the top bar.', undefined, undefined, undefined)}`;
+}
+
 export function boot(cfg: RoleCfg): void {
   wireMarket();
   wireFreight();
   wireZdoc();
-  currentUser = `${cfg.name} (${cfg.roleLabel})`;
+
+  const s = cfg.session;
+  setLiveAccount(s ? { id: s.id, role: s.role, name: s.name, isDemo: s.isDemo } : null);
+  const isDemo = Boolean(s && s.isDemo);
+  const name = isDemo ? cfg.name : s?.name || cfg.name;
+  const company = isDemo ? cfg.company : s?.company || cfg.company;
+  const initials = isDemo ? cfg.initials : s?.initials || cfg.initials;
+  currentUser = `${name} (${cfg.roleLabel})`;
+
+  const resetDemo = () => {
+    if (!confirm('Reset this demo account back to its default sample data?')) return;
+    try {
+      localStorage.removeItem(MK_KEY);
+      localStorage.removeItem(LG_KEY);
+    } catch {
+      /* ignore */
+    }
+    window.location.reload();
+  };
+
   const body = document.body;
+  appEl = null;
   body.innerHTML = `
-  <div class="dsh-app" style="--ac:${cfg.accent};--ac-hover:${cfg.accentHover};--ac-soft:${cfg.accentLight};--ac-rgb:${cfg.accentRgb};--grad:linear-gradient(135deg,${cfg.accent} 0%,${cfg.gradientEnd} 100%);--ac-deep:${cfg.accentHover}">
+  <div class="dsh-app" style="--ac:${cfg.accent};--ac-hover:${cfg.accentHover};--ac-soft:${cfg.accentLight};--ac-rgb:${cfg.accentRgb};--ac-deep:${cfg.accentHover}">
     <div class="dsh-overlay" id="dsh-overlay"></div>
     <aside class="dsh-sidebar">
       <a href="#${cfg.pages[0].id}" class="dsh-brand">
@@ -2975,29 +3872,67 @@ export function boot(cfg: RoleCfg): void {
         ${navHtml(cfg)}
       </nav>
       <div class="dsh-side-foot">
-        <button class="dsh-user">
-          ${avatar(cfg.initials, 34)}
-          <span class="dsh-user-info"><span class="dsh-user-name">${cfg.name}</span><span class="dsh-user-role">${cfg.company}</span></span>
-          <span class="dsh-logout" id="dsh-logout" title="Sign out">${svg(ICON.logout)}</span>
-        </button>
+        <div class="dsh-pop-wrap">
+          <button type="button" class="dsh-user" aria-haspopup="menu" aria-expanded="false">
+            ${avatar(initials, 34)}
+            <span class="dsh-user-info"><span class="dsh-user-name">${name}</span><span class="dsh-user-role">${company}</span></span>
+            <span class="dsh-logout" id="dsh-logout" title="Sign out">${svg(ICON.logout)}</span>
+          </button>
+          <div class="dsh-pop up" data-pop="user">
+            <div class="dsh-pop-head">
+              ${avatar(initials, 32)}
+              <span class="grow" style="min-width:0;line-height:1.35">
+                <span style="display:block;font-size:13px;font-weight:700;color:var(--dsh-text)">${name}</span>
+                <span style="display:block;font-size:11px;color:var(--dsh-text-3)">${company}</span>
+              </span>
+              ${pill(isDemo ? 'Demo' : 'Live', isDemo ? 'amber' : 'green')}
+            </div>
+            ${userMenuItemsHtml(isDemo)}
+          </div>
+        </div>
       </div>
     </aside>
 
     <div class="dsh-main">
       <header class="dsh-topbar">
-        <button class="dsh-menu-btn" id="dsh-menu" aria-label="Toggle menu">${svg(ICON.menu)}</button>
+        <button type="button" class="dsh-menu-btn" id="dsh-menu" aria-label="Toggle menu">${svg(ICON.menu)}</button>
         <div class="dsh-title">
           <h1 id="dsh-title">${cfg.pages[0].title}</h1>
-          <p id="dsh-sub">${cfg.pages[0].sub || cfg.company}</p>
+          <p id="dsh-sub">${cfg.pages[0].sub || company}</p>
         </div>
-        <div class="dsh-search">${svg(ICON.search)}<input placeholder="Search contracts, loads, people…" /></div>
-        <span class="dsh-live-badge" title="Data source">DEMO</span>
-        ${cfg.pages.some((p) => p.id === 'cart') ? `<button class="dsh-cartbtn" id="dsh-cart" aria-label="Cart">${svg(ICON.shop)}<span class="dsh-cart-count">${marketQty()}</span></button>` : ''}
-        <button class="dsh-bell" id="dsh-bell" aria-label="Notifications">${svg(ICON.bell)}<span class="dsh-bell-count">2</span></button>
+        <button type="button" class="dsh-search" id="dsh-searchbox" aria-label="Search (Ctrl+K)">${svg(ICON.search)}<span class="dsh-search-ph">Search ZVIDA…</span><kbd class="dsh-kbd">ctrl&nbsp;K</kbd></button>
+        <button type="button" class="dsh-searchbtn" id="dsh-searchbtn" aria-label="Search">${svg(ICON.search)}</button>
+        <span class="dsh-live-badge" id="dsh-live-badge" title="${isDemo ? 'Demo account — sample data, resets locally' : 'Live ZVIDA account'}">${isDemo ? 'DEMO' : 'OFFLINE'}</span>
+        ${cfg.pages.some((p) => p.id === 'cart') ? `<button type="button" class="dsh-cartbtn" id="dsh-cart" aria-label="Cart">${svg(ICON.shop)}<span class="dsh-cart-count">${marketQty()}</span></button>` : ''}
+        <button type="button" class="dsh-theme" id="dsh-theme" aria-label="Toggle dark mode" title="Toggle dark mode">${svg(ICON.sun, 'sun')}${svg(ICON.moon, 'moon')}</button>
+        <div class="dsh-pop-wrap">
+          <button type="button" class="dsh-bell" id="dsh-bell" aria-label="Notifications" aria-haspopup="dialog" aria-expanded="false">${svg(ICON.bell)}<span class="dsh-bell-count">0</span></button>
+          <div class="dsh-pop dsh-notif" data-pop="notif">
+            <div class="dsh-notif-head">
+              <span class="dsh-notif-title">${svg(ICON.bell)}Notifications</span>
+              <button type="button" class="dsh-notif-clear" data-notif-clear>Mark all read</button>
+            </div>
+            <div class="dsh-notif-list" data-notif-list></div>
+            <div class="dsh-notif-foot"><a href="#notifications" class="dsh-notif-view">View all notifications</a></div>
+          </div>
+        </div>
         <span class="dsh-top-sep"></span>
-        <div class="dsh-me">
-          ${avatar(cfg.initials, 34)}
-          <div class="dsh-me-info"><div class="dsh-me-name">${cfg.name}</div><div class="dsh-me-role">${cfg.roleLabel}</div></div>
+        <div class="dsh-pop-wrap">
+          <button type="button" class="dsh-me" aria-haspopup="menu" aria-expanded="false">
+            ${avatar(initials, 34)}
+            <span class="dsh-me-info"><span class="dsh-me-name">${name}</span><span class="dsh-me-role">${cfg.roleLabel}</span></span>
+          </button>
+          <div class="dsh-pop" data-pop="user">
+            <div class="dsh-pop-head">
+              ${avatar(initials, 32)}
+              <span class="grow" style="min-width:0;line-height:1.35">
+                <span style="display:block;font-size:13px;font-weight:700;color:var(--dsh-text)">${name}</span>
+                <span style="display:block;font-size:11px;color:var(--dsh-text-3)">${company}</span>
+              </span>
+              ${pill(isDemo ? 'Demo' : 'Live', isDemo ? 'amber' : 'green')}
+            </div>
+            ${userMenuItemsHtml(isDemo)}
+          </div>
         </div>
       </header>
       <main class="dsh-content" id="dsh-root"></main>
@@ -3016,31 +3951,244 @@ export function boot(cfg: RoleCfg): void {
   overlay.addEventListener('click', closeSidebar);
   sidebar.querySelectorAll('.dsh-link').forEach((a) => a.addEventListener('click', closeSidebar));
 
+  appEl = app;
+  setTheme(loadThemePref());
+
+  /* ---------- Command palette ---------- */
+  const quickActions: PaletteQuickAction[] = [
+    {
+      icon: ICON.bell,
+      name: 'Notifications',
+      desc: 'View unread activity',
+      run: () => { (document.getElementById('dsh-bell') as HTMLButtonElement)?.click(); },
+    },
+    {
+      icon: currentTheme === 'dark' ? ICON.sun : ICON.moon,
+      name: `Switch to ${currentTheme === 'dark' ? 'light' : 'dark'} mode`,
+      desc: 'Appearance',
+      run: () => setTheme(currentTheme === 'dark' ? 'light' : 'dark'),
+    },
+    ...(isDemo
+      ? [{ icon: ICON.refresh, name: 'Reset demo data', desc: 'Restore the sample dataset', run: () => resetDemo() }]
+      : []),
+    {
+      icon: ICON.settings,
+      name: 'Account settings',
+      desc: 'Profile, verification, payouts',
+      run: () => { const p = cfg.pages.find((pg) => pg.id === 'settings' || pg.id === 'account'); if (p) window.location.hash = '#' + p.id; else toast('Account settings', 'info'); },
+    },
+    { icon: ICON.logout, name: 'Sign out', desc: 'End this session', run: () => { void signOutAndRedirect(); } },
+  ];
+  const livePaletteRows = (): PaletteRow[] => {
+    const m = mkLoad()!;
+    const f = lgLoad()!;
+    const navTo = (ids: string[]) => {
+      const id = cfg.pages.find((pg) => ids.includes(pg.id))?.id || cfg.pages[0].id;
+      window.location.hash = '#' + id;
+    };
+    const rows: PaletteRow[] = [];
+    m.cat.slice(0, 40).forEach((p) =>
+      rows.push({
+        icon: ICON.shop,
+        name: p.name,
+        desc: `Marketplace · ${marketMoney(p.price)} / ${p.unit} · ${p.seller}`,
+        text: `${p.name} ${p.seller} ${p.category} ${p.unit}`.toLowerCase(),
+        run: () => { toast(`Opened ${p.name}`); navTo(['shop', 'marketplace', 'sell']); },
+      })
+    );
+    f.loads.slice(0, 30).forEach((l) =>
+      rows.push({
+        icon: ICON.truck,
+        name: `Load ${l.ref} — ${l.commodity}`,
+        desc: `${l.supplier} → ${l.receiver} · ${l.status}`,
+        text: `load ${l.ref} ${l.commodity} ${l.supplier} ${l.receiver} ${l.from} ${l.dest} ${l.status} ${l.truck} ${l.driver}`.toLowerCase(),
+        run: () => { toast(`Opened load ${l.ref}`); navTo(['contracts', 'deliveries', 'loads', 'trips']); },
+      })
+    );
+    m.orders.slice(0, 30).forEach((o) =>
+      rows.push({
+        icon: ICON.orders,
+        name: o.ref,
+        desc: `${o.buyer} · ${o.status} · ${marketMoney(o.total)}`,
+        text: `order ${o.ref} ${o.buyer} ${o.status} ${o.id}`.toLowerCase(),
+        run: () => { toast(`Opened ${o.ref}`); navTo(['orders', 'marketplace']); },
+      })
+    );
+    return rows;
+  };
+  initPalette(cfg, quickActions, livePaletteRows);
+  (document.getElementById('dsh-searchbox') as HTMLButtonElement).addEventListener('click', () => openPalette());
+  (document.getElementById('dsh-searchbtn') as HTMLButtonElement).addEventListener('click', () => openPalette());
+  (document.getElementById('dsh-theme') as HTMLButtonElement).addEventListener('click', () => setTheme(currentTheme === 'dark' ? 'light' : 'dark'));
+
+  /* ---------- Sign out ---------- */
   (document.getElementById('dsh-logout') as HTMLElement).addEventListener('click', () => { void signOutAndRedirect(); });
-  (document.getElementById('dsh-bell') as HTMLButtonElement).addEventListener('click', () => toast('You have 2 new notifications', 'info'));
+
+  /* ---------- User menus ---------- */
+  const menuAction = (action: string): void => {
+    switch (action) {
+      case 'settings': {
+        closeAllPops();
+        const p = cfg.pages.find((pg) => pg.id === 'settings' || pg.id === 'account');
+        if (p) window.location.hash = '#' + p.id;
+        else toast('Account settings', 'info');
+        break;
+      }
+      case 'signout':
+        void signOutAndRedirect();
+        break;
+      case 'reset-demo':
+        closeAllPops();
+        resetDemo();
+        break;
+    }
+  };
+  app.querySelectorAll<HTMLElement>('[data-pop="user"]').forEach((pop) => {
+    pop.addEventListener('click', (e) => {
+      const t = (e.target as HTMLElement).closest<HTMLElement>('[data-action],[data-theme-opt]');
+      if (!t) return;
+      const action = t.getAttribute('data-action');
+      if (action) { menuAction(action); return; }
+      const opt = t.getAttribute('data-theme-opt');
+      if (opt === 'light' || opt === 'dark' || opt === 'system') setTheme(opt);
+    });
+  });
+  app.querySelectorAll<HTMLElement>('.dsh-user, .dsh-me').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      if ((e.target as HTMLElement).closest('#dsh-logout')) return;
+      const wrap = btn.closest<HTMLElement>('.dsh-pop-wrap');
+      const panel = wrap?.querySelector<HTMLElement>('[data-pop]');
+      if (panel) togglePop(btn, panel);
+    });
+  });
+
+  /* ---------- Notifications ---------- */
+  const bellBtn = document.getElementById('dsh-bell') as HTMLButtonElement;
+  const bellCount = () => body.querySelector('.dsh-bell-count') as HTMLElement | null;
+  const notifPanel = bellBtn.closest<HTMLElement>('.dsh-pop-wrap')?.querySelector<HTMLElement>('[data-pop="notif"]') as HTMLElement;
+
+  const refreshBell = async () => {
+    if (isDemo) {
+      const b = bellCount();
+      if (b) {
+        b.textContent = String(demoNotifs().length);
+        b.style.display = '';
+        b.title = 'Sample notifications';
+      }
+      return;
+    }
+    const n = await fetchUnreadNotifications();
+    const b = bellCount();
+    if (!b) return;
+    b.textContent = String(n.count);
+    b.style.display = n.count ? '' : 'none';
+    if (n.count && n.latest[0]) b.title = n.latest[0].title;
+  };
+
+  bellBtn.addEventListener('click', () => {
+    if (isDemo) {
+      togglePop(bellBtn, notifPanel);
+      if (activePop) renderNotifList(notifPanel, demoNotifs());
+      return;
+    }
+    togglePop(bellBtn, notifPanel);
+    if (!activePop) return;
+    renderNotifList(notifPanel, lastNotifs);
+    void (async () => {
+      const n = await fetchUnreadNotifications();
+      lastNotifs = n.latest;
+      if (activePop && activePop.btn === bellBtn) renderNotifList(notifPanel, n.latest);
+    })();
+  });
+  notifPanel.querySelector('[data-notif-clear]')?.addEventListener('click', () => {
+    if (!isDemo) void markNotificationsRead();
+    lastNotifs = [];
+    renderNotifList(notifPanel, []);
+    const b = bellCount();
+    if (b) { b.textContent = '0'; b.style.display = 'none'; }
+    toast('All notifications marked as read', 'info');
+  });
+  notifPanel.querySelector('[data-notif-view]')?.addEventListener('click', () => closeAllPops());
+
   (document.getElementById('dsh-cart') as HTMLButtonElement)?.addEventListener('click', () => {
     window.location.hash = '#cart';
     toast(marketQty() ? `Opening cart (${marketQty()} items)` : 'Your cart is empty', 'info');
   });
 
-  const searchInput = body.querySelector<HTMLInputElement>('.dsh-search input');
-  searchInput?.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') toast(`Searching ZVIDA: ${searchInput.value.trim() || 'all results'}`, 'info');
-  });
-  app.querySelector('.dsh-user')?.addEventListener('click', (e) => {
-    if ((e.target as HTMLElement).closest('#dsh-logout')) return;
-    toast('Account settings', 'info');
+  const liveBadge = document.getElementById('dsh-live-badge');
+  liveBadge?.addEventListener('click', () => {
+    if (isDemo) resetDemo();
+    else toast(getLiveAccount() ? 'Connected to ZVIDA — data is live' : 'Reconnecting…', 'info');
   });
 
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => { if (themePref === 'system') setTheme('system'); });
+
+  onAuthChange((session) => {
+    if (!session) {
+      window.location.href = '/login.html';
+      return;
+    }
+    if (!isDemo) void refreshBell();
+  });
+
+  /* Real accounts start empty: never flash the demo seed before hydration. */
+  if (!isDemo) {
+    try {
+      localStorage.removeItem(MK_KEY);
+      localStorage.removeItem(LG_KEY);
+    } catch {
+      /* ignore */
+    }
+    marketStore = { cat: zvidaGoods(), cart: {}, orders: [], seq: 1, rfqs: [] };
+    freightStore = { loads: [], seq: 1 };
+  }
+
   const render = (id: string) => {
+    closeAllPops();
+    const isNotifPage = id === 'notifications';
     const page = cfg.pages.find((p) => p.id === id) || cfg.pages[0];
-    title.textContent = page.title;
-    sub.textContent = page.sub || cfg.company;
-    root.innerHTML = page.render();
+    title.textContent = isNotifPage ? 'Notifications' : page.title;
+    sub.textContent = isNotifPage ? 'Everything happening in your workspace' : (page.sub || company);
+    let html = isNotifPage ? notificationsPageHtml(cfg) : page.render();
+    if (!isDemo && !isNotifPage) {
+      const m = mkLoad()!;
+      const f = lgLoad()!;
+      const stats = onboardStats(cfg, s);
+      const noActivity = m.orders.length === 0 && f.loads.length === 0;
+      const keep = Boolean(cfg.keepEmpty && cfg.keepEmpty.includes(page.id));
+      if (noActivity && !keep) {
+        html = emptyAccountPage(cfg, page, s, stats);
+      } else if (liveMode && noActivity) {
+        html = onboardingHtml(cfg, s, stats) + html;
+      }
+    }
+    root.innerHTML = html;
     applyPersisted(root);
     sidebar.querySelectorAll('.dsh-link').forEach((a) => a.classList.toggle('active', a.getAttribute('data-page') === page.id));
     wireToasts(root);
+    root.querySelectorAll<HTMLElement>('[data-onboard-dismiss]').forEach((b) =>
+      b.addEventListener('click', () => {
+        try {
+          if (s) {
+            const list: string[] = JSON.parse(localStorage.getItem(ONBOARD_DISMISS_KEY) || '[]');
+            if (!list.includes(`${cfg.key}:${s.id}`)) list.push(`${cfg.key}:${s.id}`);
+            localStorage.setItem(ONBOARD_DISMISS_KEY, JSON.stringify(list));
+          }
+        } catch {
+          /* ignore */
+        }
+        b.closest('.dsh-onboard')?.remove();
+      })
+    );
     animateCounters(root);
+    root.querySelectorAll<HTMLElement>('[data-async]').forEach((el) => {
+      const fn = asyncFills[el.getAttribute('data-async') || ''];
+      if (!fn) return;
+      el.innerHTML = skeleton('row', 2);
+      void fn().then((h) => {
+        if (document.body.contains(el)) el.innerHTML = h;
+      });
+    });
     window.scrollTo(0, 0);
     closeSidebar();
   };
@@ -3053,12 +4201,40 @@ export function boot(cfg: RoleCfg): void {
   root.innerHTML = `${skeleton('card', 2)}<div style="height:14px"></div>${skeleton('row', 4)}`;
   setTimeout(() => render(first), 320);
 
-  void hydrateLive();
+  if (isDemo) {
+    if (liveBadge) {
+      liveBadge.textContent = 'DEMO';
+      liveBadge.classList.add('demo');
+    }
+    void refreshBell();
+  } else {
+    void hydrateLive();
+    void refreshBell();
+    const stopLive = startRealtime({
+      onTables: (tables) => {
+        void hydrateTables(tables);
+        void refreshBell();
+      },
+      onAnnounce: (title, body) => {
+        toast(`${title}${body ? ` — ${body}` : ''}`, 'info');
+      },
+      onPresence: (count) => {
+        const b = document.getElementById('dsh-live-badge');
+        if (b) b.title = count > 1 ? `${count} devices online` : 'Connected to ZVIDA — data is live';
+      },
+      onForceLogout: () => {
+        void signOutAndRedirect();
+      },
+    });
+    window.addEventListener('beforeunload', stopLive);
+  }
 
-  let n = 2;
-  setInterval(() => {
-    n = Math.min(n + 1, 9);
-    const badge = body.querySelector('.dsh-bell-count');
-    if (badge) badge.textContent = String(n);
-  }, 20000);
+  if (isDemo) {
+    let n = 2;
+    setInterval(() => {
+      n = Math.min(n + 1, 9);
+      const b = bellCount();
+      if (b) b.textContent = String(n);
+    }, 20000);
+  }
 }

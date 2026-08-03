@@ -1,5 +1,7 @@
 # ZVIDA PWA Backend Setup - Supabase
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 This guide will help you set up Supabase as the backend for the ZVIDA Progressive Web App.
 
 ## Overview

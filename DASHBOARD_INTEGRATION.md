@@ -1,5 +1,7 @@
 # Dashboard Integration Guide
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 This guide shows how to use Supabase backend in the ZVIDA dashboards.
 
 ## Quick Start

@@ -1,9 +1,10 @@
 ﻿import './styles.css';
 import './design-system.css';
-import { initDesignSystem, FormValidator } from './ui-utils';
+import { initDesignSystem, FormValidator, openModal, closeModal, toast } from './ui-utils';
 import ZvidaSearch from './search';
 import { registerServiceWorker, onOnlineStatusChange } from './lib/pwa';
-import { initializeAuth, onAuthChange } from './lib/auth';
+import { initializeAuth, onAuthChange, getAuthState } from './lib/auth';
+import { supabase } from './lib/supabase';
 import { initAuthUI } from './lib/auth-ui';
 import { canAccessDashboard, type UserRole } from './lib/auth-utils';
 import { initializeRealtimeSubscriptions } from './lib/realtime';
@@ -217,10 +218,151 @@ function renderProduct(p: Product): string {
         <p class="pcard-stock">${p.available.toLocaleString()} ${p.availUnit} available</p>
         <div class="pcard-footer">
           <span class="pcard-location">${p.location}</span>
-          <button class="btn btn-primary pcard-btn">Configure Order</button>
+          <button class="btn btn-primary pcard-btn" type="button">Configure Order</button>
         </div>
       </div>
     </div>`;
+}
+
+let orderProduct: Product | null = null;
+let currentProducts: Product[] = [];
+
+function orderRef(): string {
+  return 'ZV-ORD-' + Math.random().toString(36).slice(2, 8).toUpperCase();
+}
+
+function initOrderFlow(): void {
+  const modal = document.getElementById('order-modal');
+  const form = document.getElementById('order-form') as HTMLFormElement | null;
+  const qtyEl = document.getElementById('order-qty') as HTMLInputElement | null;
+  const summaryEl = document.getElementById('order-summary');
+  const totalEl = document.getElementById('order-total');
+  const nameEl = document.getElementById('order-name') as HTMLInputElement | null;
+  const phoneEl = document.getElementById('order-phone') as HTMLInputElement | null;
+  const emailEl = document.getElementById('order-email') as HTMLInputElement | null;
+  const qtyMsg = document.getElementById('order-qty-msg');
+
+  if (!modal || !form) return;
+
+  function refreshSummary(): void {
+    if (!orderProduct) return;
+    const q = Math.max(1, parseInt(qtyEl?.value || '1', 10) || 1);
+    const total = q * orderProduct.price;
+    if (summaryEl) {
+      summaryEl.innerHTML = `
+        <strong>${orderProduct.name}${orderProduct.variant ? ' &mdash; ' + orderProduct.variant : ''}</strong><br />
+        USD ${formatPrice(orderProduct.price)} / ${orderProduct.unit} &middot; ${orderProduct.location} &middot;
+        ${orderProduct.available.toLocaleString()} ${orderProduct.availUnit} available`;
+    }
+    if (totalEl) totalEl.textContent = `USD ${formatPrice(total)}`;
+    if (qtyEl) {
+      const max = Math.floor(orderProduct.available);
+      if (q > max) {
+        qtyEl.value = String(max);
+        if (qtyMsg) { qtyMsg.textContent = `Only ${max} ${orderProduct.availUnit} available.`; qtyMsg.className = 'ds-msg error'; }
+      } else if (qtyMsg) { qtyMsg.textContent = ''; qtyMsg.className = 'ds-msg'; }
+    }
+  }
+
+  qtyEl?.addEventListener('input', refreshSummary);
+
+  document.getElementById('order-cancel')?.addEventListener('click', () => closeModal('order-modal'));
+
+  form.addEventListener('submit', async (e: Event) => {
+    e.preventDefault();
+    if (!orderProduct) return;
+
+    const q = parseInt(qtyEl?.value || '0', 10) || 0;
+    if (q < 1) {
+      toast.error('Invalid quantity', 'Enter a quantity of at least 1 tonne.');
+      return;
+    }
+    const max = Math.floor(orderProduct.available);
+    if (q > max) {
+      toast.error('Quantity unavailable', `Only ${max} ${orderProduct.availUnit} in stock.`);
+      return;
+    }
+
+    const name = nameEl?.value.trim() || '';
+    const phone = phoneEl?.value.trim() || '';
+    const email = emailEl?.value.trim() || '';
+    if (!name || !phone || !email) {
+      toast.error('Missing details', 'Please provide your name, phone and email.');
+      return;
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      toast.error('Invalid email', 'Please enter a valid email address.');
+      return;
+    }
+
+    const address = (document.getElementById('order-address') as HTMLTextAreaElement | null)?.value.trim() || 'Collection point';
+    const delivery = (document.getElementById('order-delivery-method') as HTMLSelectElement | null)?.value || 'ZVIDA Logistics';
+    const payment = (document.getElementById('order-payment') as HTMLSelectElement | null)?.value || 'ZVIDA Wallet';
+    const total = q * orderProduct.price;
+    const placedAt = new Date().toISOString();
+    const items = [{
+      name: orderProduct.name,
+      variant: orderProduct.variant || '',
+      category: orderProduct.category,
+      qty: q,
+      unit: orderProduct.unit,
+      price: orderProduct.price,
+      location: orderProduct.location,
+    }];
+
+    const submitBtn = document.getElementById('order-submit') as HTMLButtonElement | null;
+    if (submitBtn) submitBtn.disabled = true;
+
+    const user = getAuthState().user;
+    if (user?.id) {
+      const ref = orderRef();
+      const { error } = await supabase.from('market_orders').insert({
+        id: ref,
+        ref,
+        buyer: user.user_metadata?.full_name || name,
+        address,
+        delivery,
+        payment,
+        placed_at: placedAt,
+        items,
+        history: [{ at: placedAt, status: 'NEW', note: 'Order placed' }],
+        status: 'NEW',
+        step: 0,
+        total,
+        user_id: user.id,
+      });
+      if (submitBtn) submitBtn.disabled = false;
+      if (error) {
+        console.error('[order] insert failed:', error);
+        toast.error('Order failed', error.message || 'Could not place your order.');
+        return;
+      }
+      toast.success('Order placed', `Reference ${ref} — our sales team will contact you shortly.`);
+      form.reset();
+      if (qtyEl) qtyEl.value = '1';
+      refreshSummary();
+      closeModal('order-modal');
+    } else {
+      if (submitBtn) submitBtn.disabled = false;
+      const subject = encodeURIComponent(`Order inquiry: ${orderProduct.name} x ${q} ${orderProduct.unit}`);
+      const body = encodeURIComponent(
+        `Product: ${orderProduct.name}${orderProduct.variant ? ' (' + orderProduct.variant + ')' : ''}\n` +
+        `Quantity: ${q} ${orderProduct.unit}\n` +
+        `Location: ${orderProduct.location}\n` +
+        `Delivery: ${delivery}\n` +
+        `Address: ${address}\n` +
+        `Payment: ${payment}\n` +
+        `Estimated total: USD ${formatPrice(total)}\n` +
+        `\nName: ${name}\nPhone: ${phone}\nEmail: ${email}`
+      );
+      toast.info('Opening your email app', 'Send your order inquiry and we will follow up.');
+      window.location.href = `mailto:clemencechikombe@gmail.com?subject=${subject}&body=${body}`;
+      form.reset();
+      if (qtyEl) qtyEl.value = '1';
+      refreshSummary();
+      closeModal('order-modal');
+    }
+  });
 }
 
 function initMarketplace(): void {
@@ -260,6 +402,7 @@ function initMarketplace(): void {
 
     if (grid) grid.innerHTML = filtered.map(renderProduct).join('');
     if (countEl) countEl.textContent = `${filtered.length} results`;
+    currentProducts = filtered;
   }
 
   categoriesEl?.addEventListener('click', (e: Event) => {
@@ -281,6 +424,35 @@ function initMarketplace(): void {
   sortSelect?.addEventListener('change', () => {
     sortValue = sortSelect.value;
     render();
+  });
+
+  grid.addEventListener('click', (e: Event) => {
+    const btn = (e.target as HTMLElement).closest<HTMLElement>('.pcard-btn');
+    if (!btn) return;
+    const card = btn.closest<HTMLElement>('.pcard');
+    if (!card) return;
+    const idx = Array.from(grid.children).indexOf(card);
+    const product = currentProducts[idx];
+    if (!product) return;
+    orderProduct = product;
+
+    const qtyEl = document.getElementById('order-qty') as HTMLInputElement | null;
+    if (qtyEl) qtyEl.value = '1';
+    const summaryEl = document.getElementById('order-summary');
+    if (summaryEl) {
+      summaryEl.innerHTML = `
+        <strong>${product.name}${product.variant ? ' &mdash; ' + product.variant : ''}</strong><br />
+        USD ${formatPrice(product.price)} / ${product.unit} &middot; ${product.location} &middot;
+        ${product.available.toLocaleString()} ${product.availUnit} available`;
+    }
+    const totalEl = document.getElementById('order-total');
+    if (totalEl) totalEl.textContent = `USD ${formatPrice(product.price)}`;
+    const user = getAuthState().user;
+    const nameEl = document.getElementById('order-name') as HTMLInputElement | null;
+    const emailEl = document.getElementById('order-email') as HTMLInputElement | null;
+    if (nameEl && user?.user_metadata?.full_name) nameEl.value = user.user_metadata.full_name;
+    if (emailEl && user?.email) emailEl.value = user.email;
+    openModal('order-modal');
   });
 
   render();
@@ -386,6 +558,7 @@ function init(): void {
   initStatCounters();
   initNewsletterForm();
   initMarketplace();
+  initOrderFlow();
   initFAQ();
   initContactForm();
   initDesignSystem();

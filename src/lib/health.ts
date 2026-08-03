@@ -35,10 +35,11 @@ export async function checkHealth(): Promise<HealthStatus> {
     services.auth = true;
   } catch { services.auth = false; }
 
-  // Check storage
+  // Check storage (reachability probe — no listing policy required)
   try {
-    const { error } = await supabase.storage.from('listing-photos').list('', { limit: 1 });
-    services.storage = !error;
+    const { data } = supabase.storage.from('listing-photos').getPublicUrl('__health_probe__');
+    await fetch(data.publicUrl);
+    services.storage = true;
   } catch { services.storage = false; }
 
   // Check realtime

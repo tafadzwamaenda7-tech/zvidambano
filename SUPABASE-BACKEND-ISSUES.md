@@ -1,5 +1,7 @@
 # ZVIDAMBANO — Backend Issues & Solutions with Supabase
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 Complete guide covering object storage, rate limiting, caching, security, error handling, and all other backend concerns.
 
 ---

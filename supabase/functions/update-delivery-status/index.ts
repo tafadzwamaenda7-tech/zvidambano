@@ -1,10 +1,15 @@
 // ============================================================
 // Edge Function: update-delivery-status
-// Updates delivery status with GPS tracking and notifications
+// Updates delivery status with GPS tracking and notifications.
+// Authorization: assigned driver, or admin/broker. Rate limited.
 // ============================================================
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts"
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2"
+
+const JSON_HEADERS = { "Content-Type": "application/json" }
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: JSON_HEADERS })
 
 const STATUS_FLOW: Record<string, string> = {
   PENDING: "LOADING",
@@ -14,24 +19,77 @@ const STATUS_FLOW: Record<string, string> = {
   SECOND_WEIGHT: "DELIVERED",
 }
 
+async function authenticate(req: Request): Promise<{ user?: any; client?: any; error?: Response }> {
+  const authHeader = req.headers.get("Authorization")
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return { error: json({ error: "Missing or malformed Authorization header" }, 401) }
+  }
+  const client = createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_ANON_KEY")!,
+    { global: { headers: { Authorization: authHeader } } }
+  )
+  const { data, error } = await client.auth.getUser()
+  if (error || !data.user) {
+    return { error: json({ error: "Invalid or expired token" }, 401) }
+  }
+  return { user: data.user, client }
+}
+
+async function isPrivileged(client: any, uid: string): Promise<boolean> {
+  const { data } = await client
+    .from("users")
+    .select("role")
+    .eq("id", uid)
+    .maybeSingle()
+  return !!data && (data.role === "admin" || data.role === "broker")
+}
+
+async function checkRateLimit(supabase: any, bucket: string, limit: number, window: string): Promise<boolean> {
+  const { data: allowed } = await supabase.rpc("rate_limit_check", {
+    p_bucket: bucket,
+    p_limit: limit,
+    p_window: window,
+  })
+  return allowed === true
+}
+
 serve(async (req) => {
   try {
-    const { delivery_id, status, gps_lat, gps_lng, weight_data } = await req.json()
+    const { user, client, error } = await authenticate(req)
+    if (error) return error
 
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     )
 
-    // Get current delivery
-    const { data: delivery, error: fetchError } = await supabase
-      .from("deliveries")
-      .select("*")
-      .eq("id", delivery_id)
-      .single()
+    const { delivery_id, contract_id, status, gps_lat, gps_lng, weight_data } = await req.json()
 
-    if (fetchError) throw fetchError
-    if (!delivery) throw new Error("Delivery not found")
+    if (!delivery_id && !contract_id) {
+      return json({ error: "delivery_id or contract_id is required" }, 400)
+    }
+
+    // Resolve the delivery by id, or fall back to the single delivery for a contract.
+    let query = supabase.from("deliveries").select("*")
+    if (delivery_id) query = query.eq("id", delivery_id).maybeSingle()
+    else query = query.eq("contract_id", contract_id).maybeSingle()
+
+    const { data: delivery, error: fetchError } = await query
+
+    if (fetchError || !delivery) {
+      return json({ error: "Delivery not found" }, 404)
+    }
+
+    // Authorization: assigned driver, or admin/broker
+    const privileged = await isPrivileged(client, user.id)
+    if (!privileged && delivery.driver_id !== user.id) {
+      return json({ error: "Forbidden: not the assigned driver" }, 403)
+    }
+
+    if (!(await checkRateLimit(supabase, `update-delivery-status:${user.id}`, 120, "1 hour"))) {
+      return json({ error: "Rate limit exceeded" }, 429)
+    }
 
     // Build update object
     const updates: Record<string, any> = {
@@ -101,13 +159,8 @@ serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ delivery: updated }), {
-      headers: { "Content-Type": "application/json" },
-    })
+    return json({ delivery: updated })
   } catch (error) {
-    return new Response(JSON.stringify({ error: error.message }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    })
+    return json({ error: error.message }, 400)
   }
 })

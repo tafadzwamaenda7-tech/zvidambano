@@ -138,7 +138,8 @@ CREATE TABLE IF NOT EXISTS public.contracts (
     )
   ),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  meta JSONB
 );
 
 CREATE INDEX IF NOT EXISTS idx_contracts_status ON public.contracts(status);
@@ -366,6 +367,29 @@ CREATE TABLE IF NOT EXISTS public.messages (
 CREATE INDEX IF NOT EXISTS idx_messages_receiver_id ON public.messages(receiver_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON public.messages(sender_id);
 
+-- ---------- RFQS ----------
+CREATE TABLE IF NOT EXISTS public.rfqs (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  offtaker_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  commodity_id UUID REFERENCES public.commodities(id) ON DELETE SET NULL,
+  commodity TEXT,
+  quantity NUMERIC NOT NULL DEFAULT 0,
+  unit TEXT DEFAULT 'kg',
+  max_price NUMERIC,
+  delivery_point TEXT,
+  delivery_date DATE,
+  status TEXT NOT NULL DEFAULT 'OPEN' CHECK (
+    status IN ('OPEN', 'MATCHING', 'FILLED', 'CLOSED')
+  ),
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_rfqs_offtaker_id ON public.rfqs(offtaker_id);
+CREATE INDEX IF NOT EXISTS idx_rfqs_status ON public.rfqs(status);
+CREATE INDEX IF NOT EXISTS idx_rfqs_commodity_id ON public.rfqs(commodity_id);
+
 -- ---------- INPUT ORDERS ----------
 CREATE TABLE IF NOT EXISTS public.input_orders (
   id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -426,9 +450,141 @@ CREATE TABLE IF NOT EXISTS public.equipment_listings (
 CREATE INDEX IF NOT EXISTS idx_equipment_owner_id ON public.equipment_listings(owner_id);
 CREATE INDEX IF NOT EXISTS idx_equipment_category ON public.equipment_listings(category);
 
+-- ---------- AUDIT LOG ----------
+CREATE TABLE IF NOT EXISTS public.audit_log (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id UUID REFERENCES public.users(id),
+  action TEXT NOT NULL,
+  table_name TEXT NOT NULL,
+  record_id UUID,
+  old_values JSONB,
+  new_values JSONB,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_log_table ON public.audit_log(table_name);
+CREATE INDEX IF NOT EXISTS idx_audit_log_record_id ON public.audit_log(record_id);
+
+-- ---------- AUTH EVENTS (client-side audit trail) ----------
+CREATE TABLE IF NOT EXISTS public.auth_events (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  event_type TEXT NOT NULL,
+  email TEXT,
+  user_id UUID REFERENCES public.users(id),
+  role TEXT,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------- MARKET ORDERS (public shop ordering flow) ----------
+CREATE TABLE IF NOT EXISTS public.market_orders (
+  id TEXT PRIMARY KEY,
+  ref TEXT NOT NULL,
+  buyer TEXT NOT NULL,
+  address TEXT NOT NULL,
+  delivery TEXT NOT NULL,
+  payment TEXT NOT NULL,
+  placed_at TEXT NOT NULL,
+  items JSONB NOT NULL DEFAULT '[]'::jsonb,
+  history JSONB NOT NULL DEFAULT '[]'::jsonb,
+  status TEXT NOT NULL DEFAULT 'NEW',
+  step INTEGER NOT NULL DEFAULT 0,
+  total NUMERIC NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  user_id UUID REFERENCES public.users(id)
+);
+
+-- ---------- RATE LIMITS (rate_limit_check bucket counter) ----------
+CREATE TABLE IF NOT EXISTS public.rate_limits (
+  bucket TEXT PRIMARY KEY,
+  window_start TIMESTAMPTZ NOT NULL DEFAULT now(),
+  count INTEGER NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ============================================================
 -- 4. TRIGGERS (auto-update updated_at)
 -- ============================================================
+
+-- ============================================================
+-- 4a. SECURITY-DEFINER HELPERS (used by RLS policies below)
+-- ============================================================
+CREATE SCHEMA IF NOT EXISTS private;
+
+CREATE OR REPLACE FUNCTION private.is_zvida_admin()
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+  SELECT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin');
+$function$;
+
+CREATE OR REPLACE FUNCTION private.is_assigned_driver(p_contract_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.deliveries d
+    WHERE d.contract_id = p_contract_id
+      AND d.driver_id = auth.uid()
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION private.is_contract_party(p_contract_id uuid)
+RETURNS boolean
+LANGUAGE sql
+STABLE SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+  SELECT EXISTS (
+    SELECT 1
+    FROM public.contracts c
+    WHERE c.id = p_contract_id
+      AND (
+        c.farmer_id = auth.uid()
+        OR c.offtaker_id = auth.uid()
+        OR c.broker_id = auth.uid()
+        OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker'))
+      )
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.rate_limit_check(p_bucket text, p_limit integer, p_window interval)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_row public.rate_limits%rowtype;
+BEGIN
+  INSERT INTO public.rate_limits (bucket)
+  VALUES (p_bucket)
+  ON CONFLICT (bucket) DO NOTHING;
+
+  SELECT * INTO v_row FROM public.rate_limits WHERE bucket = p_bucket FOR UPDATE;
+
+  IF v_row.window_start < now() - p_window THEN
+    UPDATE public.rate_limits
+    SET window_start = now(), count = 1, updated_at = now()
+    WHERE bucket = p_bucket;
+    RETURN true;
+  END IF;
+
+  IF v_row.count >= p_limit THEN
+    RETURN false;
+  END IF;
+
+  UPDATE public.rate_limits
+  SET count = count + 1, updated_at = now()
+  WHERE bucket = p_bucket;
+  RETURN true;
+END;
+$function$;
 
 CREATE OR REPLACE FUNCTION create_update_trigger(table_name TEXT)
 RETURNS VOID AS $$
@@ -487,236 +643,397 @@ ALTER TABLE public.disputes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.price_board ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rfqs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.input_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.financing_applications ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.equipment_listings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.audit_log ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.auth_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.market_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.rate_limits ENABLE ROW LEVEL SECURITY;
+
+-- Realtime: FULL replica identity so DELETE/UPDATE websocket events carry the old row
+ALTER TABLE public.contracts REPLICA IDENTITY FULL;
+ALTER TABLE public.deliveries REPLICA IDENTITY FULL;
+ALTER TABLE public.listings REPLICA IDENTITY FULL;
+ALTER TABLE public.market_orders REPLICA IDENTITY FULL;
+ALTER TABLE public.messages REPLICA IDENTITY FULL;
+ALTER TABLE public.notifications REPLICA IDENTITY FULL;
+ALTER TABLE public.payments REPLICA IDENTITY FULL;
+ALTER TABLE public.price_board REPLICA IDENTITY FULL;
+ALTER TABLE public.rfqs REPLICA IDENTITY FULL;
 
 -- Users: users can read their own profile, admins can read all
 CREATE POLICY "Users can read own profile" ON public.users
-  FOR SELECT USING (auth.uid() = id OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+  FOR SELECT USING ((select auth.uid()) = id OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 CREATE POLICY "Users can update own profile" ON public.users
-  FOR UPDATE USING (auth.uid() = id);
+  FOR UPDATE USING ((select auth.uid()) = id);
 CREATE POLICY "Admins can insert users" ON public.users
   FOR INSERT WITH CHECK (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 
 -- Farms: owners can CRUD their farms
 CREATE POLICY "Users can read farms" ON public.farms
   FOR SELECT USING (
-    owner_id = auth.uid() OR EXISTS (
-      SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+    owner_id = (select auth.uid()) OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
     )
   );
 CREATE POLICY "Users can insert farms" ON public.farms
-  FOR INSERT WITH CHECK (owner_id = auth.uid());
+  FOR INSERT WITH CHECK (owner_id = (select auth.uid()));
 CREATE POLICY "Users can update farms" ON public.farms
-  FOR UPDATE USING (owner_id = auth.uid());
+  FOR UPDATE USING (owner_id = (select auth.uid()));
 CREATE POLICY "Users can delete farms" ON public.farms
-  FOR DELETE USING (owner_id = auth.uid());
+  FOR DELETE USING (owner_id = (select auth.uid()));
 
 -- Commodities: everyone can read, admins can write
 CREATE POLICY "Anyone can read commodities" ON public.commodities
   FOR SELECT USING (true);
-CREATE POLICY "Admins can manage commodities" ON public.commodities
-  FOR ALL USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+CREATE POLICY "Admins can insert commodities" ON public.commodities
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
+  ));
+CREATE POLICY "Admins can update commodities" ON public.commodities
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
+  ));
+CREATE POLICY "Admins can delete commodities" ON public.commodities
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 
 -- Listings: everyone can read active, sellers can CRUD their own
 CREATE POLICY "Anyone can read active listings" ON public.listings
-  FOR SELECT USING (status = 'active' OR seller_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker', 'offtaker')
+  FOR SELECT USING (status = 'active' OR seller_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker', 'offtaker')
   ));
 CREATE POLICY "Sellers can insert listings" ON public.listings
-  FOR INSERT WITH CHECK (seller_id = auth.uid());
+  FOR INSERT WITH CHECK (seller_id = (select auth.uid()));
 CREATE POLICY "Sellers can update listings" ON public.listings
-  FOR UPDATE USING (seller_id = auth.uid());
+  FOR UPDATE USING (seller_id = (select auth.uid()));
 CREATE POLICY "Sellers can delete listings" ON public.listings
-  FOR DELETE USING (seller_id = auth.uid());
+  FOR DELETE USING (seller_id = (select auth.uid()));
 
--- Contracts: parties can read, brokers/admins can write
+-- Contracts: parties can read (incl. assigned drivers & haulage suppliers), brokers/admins can write
 CREATE POLICY "Parties can read contracts" ON public.contracts
   FOR SELECT USING (
-    farmer_id = auth.uid() OR offtaker_id = auth.uid() OR broker_id = auth.uid()
-    OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin')
+    farmer_id = (select auth.uid()) OR offtaker_id = (select auth.uid()) OR broker_id = (select auth.uid())
+    OR private.is_assigned_driver(id)
+    OR COALESCE(meta ->> 'supplier', '') = (SELECT users.full_name FROM public.users WHERE users.id = (select auth.uid()))
+    OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin')
   );
 CREATE POLICY "Brokers can insert contracts" ON public.contracts
   FOR INSERT WITH CHECK (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
-CREATE POLICY "Brokers can update contracts" ON public.contracts
-  FOR UPDATE USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
-  ));
+CREATE POLICY "Parties can update contracts" ON public.contracts
+  FOR UPDATE USING (
+    farmer_id = (select auth.uid()) OR offtaker_id = (select auth.uid()) OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+    )
+  ) WITH CHECK (
+    farmer_id = (select auth.uid()) OR offtaker_id = (select auth.uid()) OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+    )
+  );
 
 -- Deliveries: parties can read, drivers/brokers can write
 CREATE POLICY "Parties can read deliveries" ON public.deliveries
   FOR SELECT USING (
-    driver_id = auth.uid() OR EXISTS (
+    driver_id = (select auth.uid()) OR EXISTS (
       SELECT 1 FROM public.contracts c
       WHERE c.id = deliveries.contract_id
-      AND (c.farmer_id = auth.uid() OR c.offtaker_id = auth.uid() OR c.broker_id = auth.uid())
-    ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin')
+      AND (c.farmer_id = (select auth.uid()) OR c.offtaker_id = (select auth.uid()) OR c.broker_id = (select auth.uid()))
+    ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin')
   );
 CREATE POLICY "Drivers can insert deliveries" ON public.deliveries
   FOR INSERT WITH CHECK (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker', 'driver')
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker', 'driver')
   ));
 CREATE POLICY "Drivers can update deliveries" ON public.deliveries
   FOR UPDATE USING (
-    driver_id = auth.uid() OR EXISTS (
-      SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+    driver_id = (select auth.uid()) OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
     )
   );
 
 -- Payments: parties can read, admins can write
 CREATE POLICY "Parties can read payments" ON public.payments
   FOR SELECT USING (
-    payer_id = auth.uid() OR payee_id = auth.uid() OR EXISTS (
+    payer_id = (select auth.uid()) OR payee_id = (select auth.uid()) OR EXISTS (
       SELECT 1 FROM public.contracts c
       WHERE c.id = payments.contract_id
-      AND (c.farmer_id = auth.uid() OR c.offtaker_id = auth.uid() OR c.broker_id = auth.uid())
-    ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin')
+      AND (c.farmer_id = (select auth.uid()) OR c.offtaker_id = (select auth.uid()) OR c.broker_id = (select auth.uid()))
+    ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin')
   );
 CREATE POLICY "Admins can insert payments" ON public.payments
   FOR INSERT WITH CHECK (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
 CREATE POLICY "Admins can update payments" ON public.payments
   FOR UPDATE USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
 
 -- Notifications: users can read/update their own
 CREATE POLICY "Users can read own notifications" ON public.notifications
-  FOR SELECT USING (user_id = auth.uid());
+  FOR SELECT USING (user_id = (select auth.uid()));
 CREATE POLICY "Users can update own notifications" ON public.notifications
-  FOR UPDATE USING (user_id = auth.uid());
+  FOR UPDATE USING (user_id = (select auth.uid()));
 CREATE POLICY "System can insert notifications" ON public.notifications
   FOR INSERT WITH CHECK (true); -- Allow inserts from API/edge functions
 
 -- Messages: users can read/send their own
 CREATE POLICY "Users can read own messages" ON public.messages
-  FOR SELECT USING (sender_id = auth.uid() OR receiver_id = auth.uid());
+  FOR SELECT USING (sender_id = (select auth.uid()) OR receiver_id = (select auth.uid()));
 CREATE POLICY "Users can send messages" ON public.messages
-  FOR INSERT WITH CHECK (sender_id = auth.uid());
+  FOR INSERT WITH CHECK (sender_id = (select auth.uid()));
 CREATE POLICY "Users can update own messages" ON public.messages
-  FOR UPDATE USING (receiver_id = auth.uid());
+  FOR UPDATE USING (receiver_id = (select auth.uid()));
+
+-- RFQs: offtakers manage their own, admins/brokers can view all
+CREATE POLICY "Offtakers can read own rfqs" ON public.rfqs
+  FOR SELECT USING (
+    offtaker_id = (select auth.uid()) OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+    )
+  );
+CREATE POLICY "Offtakers can insert rfqs" ON public.rfqs
+  FOR INSERT WITH CHECK (offtaker_id = (select auth.uid()));
+CREATE POLICY "Offtakers can update own rfqs" ON public.rfqs
+  FOR UPDATE USING (
+    offtaker_id = (select auth.uid()) OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+    )
+  );
+CREATE POLICY "Offtakers can delete own rfqs" ON public.rfqs
+  FOR DELETE USING (offtaker_id = (select auth.uid()));
 
 -- Price board: everyone can read, admins can write
 CREATE POLICY "Anyone can read prices" ON public.price_board
   FOR SELECT USING (true);
-CREATE POLICY "Admins can manage prices" ON public.price_board
-  FOR ALL USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+CREATE POLICY "Admins can insert prices" ON public.price_board
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
+  ));
+CREATE POLICY "Admins can update prices" ON public.price_board
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
+  ));
+CREATE POLICY "Admins can delete prices" ON public.price_board
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 
--- Quality scans: parties can read, admins/brokers can write
+-- Quality scans: parties can read, admins/brokers/compliance can write
 CREATE POLICY "Parties can read quality scans" ON public.quality_scans
   FOR SELECT USING (EXISTS (
     SELECT 1 FROM public.contracts c
     WHERE c.id = quality_scans.contract_id
-    AND (c.farmer_id = auth.uid() OR c.offtaker_id = auth.uid() OR c.broker_id = auth.uid())
-  ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'));
-CREATE POLICY "Admins can manage quality scans" ON public.quality_scans
-  FOR ALL USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker', 'compliance')
+    AND (c.farmer_id = (select auth.uid()) OR c.offtaker_id = (select auth.uid()) OR c.broker_id = (select auth.uid()))
+  ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker', 'compliance')));
+CREATE POLICY "Admins can insert quality scans" ON public.quality_scans
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker', 'compliance')
+  ));
+CREATE POLICY "Admins can update quality scans" ON public.quality_scans
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker', 'compliance')
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker', 'compliance')
+  ));
+CREATE POLICY "Admins can delete quality scans" ON public.quality_scans
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker', 'compliance')
   ));
 
--- Documents: parties can read, admins can write
+-- Documents: parties can read, admins/brokers can write
 CREATE POLICY "Parties can read documents" ON public.documents
   FOR SELECT USING (EXISTS (
     SELECT 1 FROM public.contracts c
     WHERE c.id = documents.contract_id
-    AND (c.farmer_id = auth.uid() OR c.offtaker_id = auth.uid() OR c.broker_id = auth.uid())
-  ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'));
-CREATE POLICY "Admins can manage documents" ON public.documents
-  FOR ALL USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+    AND (c.farmer_id = (select auth.uid()) OR c.offtaker_id = (select auth.uid()) OR c.broker_id = (select auth.uid()))
+  ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')));
+CREATE POLICY "Admins can insert documents" ON public.documents
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can update documents" ON public.documents
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can delete documents" ON public.documents
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
 
 -- Disputes: parties can read, admins can write
 CREATE POLICY "Parties can read disputes" ON public.disputes
   FOR SELECT USING (
-    raised_by = auth.uid() OR EXISTS (
+    raised_by = (select auth.uid()) OR EXISTS (
       SELECT 1 FROM public.contracts c
       WHERE c.id = disputes.contract_id
-      AND (c.farmer_id = auth.uid() OR c.offtaker_id = auth.uid() OR c.broker_id = auth.uid())
-    ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin')
+      AND (c.farmer_id = (select auth.uid()) OR c.offtaker_id = (select auth.uid()) OR c.broker_id = (select auth.uid()))
+    ) OR EXISTS (SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin')
   );
 CREATE POLICY "Users can insert disputes" ON public.disputes
-  FOR INSERT WITH CHECK (raised_by = auth.uid());
+  FOR INSERT WITH CHECK (raised_by = (select auth.uid()));
 CREATE POLICY "Admins can update disputes" ON public.disputes
   FOR UPDATE USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 
 -- Settlements, invoices, commissions: parties can read, admins can write
 CREATE POLICY "Parties can read farmer settlements" ON public.farmer_settlements
-  FOR SELECT USING (farmer_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+  FOR SELECT USING (farmer_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
-CREATE POLICY "Admins can manage farmer settlements" ON public.farmer_settlements
-  FOR ALL USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+CREATE POLICY "Admins can insert farmer settlements" ON public.farmer_settlements
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can update farmer settlements" ON public.farmer_settlements
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can delete farmer settlements" ON public.farmer_settlements
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
 
 CREATE POLICY "Parties can read offtaker invoices" ON public.offtaker_invoices
-  FOR SELECT USING (offtaker_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+  FOR SELECT USING (offtaker_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
-CREATE POLICY "Admins can manage offtaker invoices" ON public.offtaker_invoices
-  FOR ALL USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+CREATE POLICY "Admins can insert offtaker invoices" ON public.offtaker_invoices
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can update offtaker invoices" ON public.offtaker_invoices
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can delete offtaker invoices" ON public.offtaker_invoices
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
 
 CREATE POLICY "Parties can read commissions" ON public.broker_commission_ledger
-  FOR SELECT USING (broker_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+  FOR SELECT USING (broker_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
-CREATE POLICY "Admins can manage commissions" ON public.broker_commission_ledger
-  FOR ALL USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role IN ('admin', 'broker')
+CREATE POLICY "Admins can insert commissions" ON public.broker_commission_ledger
+  FOR INSERT WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can update commissions" ON public.broker_commission_ledger
+  FOR UPDATE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  )) WITH CHECK (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+  ));
+CREATE POLICY "Admins can delete commissions" ON public.broker_commission_ledger
+  FOR DELETE USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
   ));
 
 -- Input orders: parties can read/write
 CREATE POLICY "Parties can read input orders" ON public.input_orders
-  FOR SELECT USING (farmer_id = auth.uid() OR supplier_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+  FOR SELECT USING (farmer_id = (select auth.uid()) OR supplier_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 CREATE POLICY "Users can insert input orders" ON public.input_orders
-  FOR INSERT WITH CHECK (farmer_id = auth.uid());
+  FOR INSERT WITH CHECK (farmer_id = (select auth.uid()));
 CREATE POLICY "Parties can update input orders" ON public.input_orders
-  FOR UPDATE USING (farmer_id = auth.uid() OR supplier_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+  FOR UPDATE USING (farmer_id = (select auth.uid()) OR supplier_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 
 -- Financing: farmers can read/insert their own, admins can manage
 CREATE POLICY "Farmers can read own financing" ON public.financing_applications
-  FOR SELECT USING (farmer_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+  FOR SELECT USING (farmer_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 CREATE POLICY "Farmers can insert financing" ON public.financing_applications
-  FOR INSERT WITH CHECK (farmer_id = auth.uid());
+  FOR INSERT WITH CHECK (farmer_id = (select auth.uid()));
 CREATE POLICY "Admins can update financing" ON public.financing_applications
   FOR UPDATE USING (EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 
 -- Equipment: everyone can read, owners can CRUD
 CREATE POLICY "Anyone can read equipment" ON public.equipment_listings
-  FOR SELECT USING (available = true OR owner_id = auth.uid() OR EXISTS (
-    SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin'
+  FOR SELECT USING (available = true OR owner_id = (select auth.uid()) OR EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
   ));
 CREATE POLICY "Owners can insert equipment" ON public.equipment_listings
-  FOR INSERT WITH CHECK (owner_id = auth.uid());
+  FOR INSERT WITH CHECK (owner_id = (select auth.uid()));
 CREATE POLICY "Owners can update equipment" ON public.equipment_listings
-  FOR UPDATE USING (owner_id = auth.uid());
+  FOR UPDATE USING (owner_id = (select auth.uid()));
 CREATE POLICY "Owners can delete equipment" ON public.equipment_listings
-  FOR DELETE USING (owner_id = auth.uid());
+  FOR DELETE USING (owner_id = (select auth.uid()));
+
+-- Audit log: admins only
+CREATE POLICY "Admins can read audit log" ON public.audit_log
+  FOR SELECT USING (EXISTS (
+    SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role = 'admin'
+  ));
+
+-- Auth events: clients can insert audit events, service role reads
+CREATE POLICY "auth_events: insert only for client audit" ON public.auth_events
+  FOR INSERT WITH CHECK (
+    event_type = ANY (ARRAY[
+      'login_success', 'login_failure', 'signup_success', 'signup_failure',
+      'magic_link_sent', 'magic_link_failure', 'password_reset_sent', 'verification_resend'
+    ])
+  );
+CREATE POLICY "auth_events: service role reads" ON public.auth_events
+  FOR SELECT USING (true);
+
+-- Market orders: owner or inbound seller, admins/brokers can manage
+CREATE POLICY "Users can read own and inbound market orders" ON public.market_orders
+  FOR SELECT USING (
+    user_id = (select auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM jsonb_array_elements(market_orders.items) it(value)
+      WHERE it.value ->> 'seller' = (SELECT users.full_name FROM public.users WHERE users.id = (select auth.uid()))
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+    )
+  );
+CREATE POLICY "Users can insert market orders" ON public.market_orders
+  FOR INSERT WITH CHECK (user_id = (select auth.uid()));
+CREATE POLICY "Parties can update market orders" ON public.market_orders
+  FOR UPDATE USING (
+    user_id = (select auth.uid())
+    OR EXISTS (
+      SELECT 1 FROM jsonb_array_elements(market_orders.items) it(value)
+      WHERE it.value ->> 'seller' = (SELECT users.full_name FROM public.users WHERE users.id = (select auth.uid()))
+    )
+    OR EXISTS (
+      SELECT 1 FROM public.users u WHERE u.id = (select auth.uid()) AND u.role IN ('admin', 'broker')
+    )
+  );
+CREATE POLICY "Users can delete own market orders" ON public.market_orders
+  FOR DELETE USING (user_id = (select auth.uid()));
+
+-- Rate limits: no direct table access (only rate_limit_check via SECURITY DEFINER)
+CREATE POLICY "rate_limits_deny_all" ON public.rate_limits
+  FOR ALL USING (false);
 
 -- ============================================================
 -- 6. SEED DATA
@@ -818,6 +1135,7 @@ ALTER PUBLICATION supabase_realtime ADD TABLE public.deliveries;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.payments;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.notifications;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.rfqs;
 ALTER PUBLICATION supabase_realtime ADD TABLE public.price_board;
 
 -- ============================================================

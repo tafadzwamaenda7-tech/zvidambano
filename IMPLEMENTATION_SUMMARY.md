@@ -1,5 +1,7 @@
 # Implementation Summary - Backend Wired & Ready
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 ## 🎯 Mission Accomplished
 
 **Fully wired backend system with real-time updates, cross-dashboard communication, and business logic for all roles.**

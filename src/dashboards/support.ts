@@ -1,4 +1,5 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars, takePendingUpload } from './core';
+import { resolveDashboardSession } from '../lib/session';
 import type { PillTone } from './core';
 
 wf('s-tk-1001', {
@@ -22,7 +23,8 @@ wf('s-tk-1006', {
 });
 
 JS.replyTicket = () => {
-  toast('Reply sent — the user will be notified');
+  const img = takePendingUpload('attach-file');
+  toast(img ? 'Reply sent with attachment — the user will be notified' : 'Reply sent — the user will be notified');
 };
 JS.openResolution = () => {
   toast('Resolution panel opened — track the outcome below');
@@ -38,6 +40,7 @@ const P = {
     render: () => `
       ${hero({
         kick: 'Support Desk · Today',
+        status: { label: 'SLA on track', tone: 'ok' },
         title: 'Support Inbox',
         sub: '4 open tickets require attention. Resolve within 24h to stay inside SLA — the fastest desk in the industry.',
         actions: `${btn('Open Tickets', 'onlight', 'Opening full ticket list', '#tickets')}${btn('Users', 'onlight', 'Opening user directory', '#users')}`,
@@ -107,7 +110,7 @@ const P = {
             ${field('Ticket', select(['#1001 — James (Farmer)', '#1002 — Sarah Moyo (Driver)', '#1003 — Peter (Offtaker)', '#1004 — Grace (Vendor)', '#1005 — Tendai (Offtaker)', '#1006 — Chipo (Farmer)']))}
             ${field('Message', textarea(3, 'Type your reply…'))}
             <div class="dsh-btn-row">
-              ${uploadBtn('Attach file', 'ghost sm', '*/*')}
+              ${uploadBtn('Attach file', 'ghost sm', '*/*', { bucket: 'documents', key: 'attach-file' })}
               ${jsBtn('Send Reply', 'primary', 'replyTicket', '', 'Reply sent — the user will be notified')}
             </div>`,
         })}
@@ -376,6 +379,9 @@ const P = {
   },
 };
 
+void (async () => {
+const session = await resolveDashboardSession('support');
+if (!session) return;
 boot({
   key: 'support',
   name: 'Support',
@@ -389,8 +395,11 @@ boot({
   accentRgb: '124, 58, 237',
   gradientEnd: '#a78bfa',
   pages: [P.inbox, P.tickets, P.users, P.disputes, P.reports],
+  keepEmpty: [],
   navGroups: [
     { label: 'Operations', pages: ['inbox', 'tickets', 'disputes'] },
     { label: 'Platform', pages: ['users', 'reports'] },
   ],
+  session,
 });
+})();

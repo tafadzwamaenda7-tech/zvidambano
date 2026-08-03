@@ -1,17 +1,22 @@
 import { supabase } from './supabase';
 
 /* ============================================================
-   ZVIDAMBANO Dashboard ⇄ Supabase bridge.
-   The dashboards in src/dashboards/core.ts keep their state in
-   localStorage by default. When a real Supabase project is
-   configured, these helpers seed + read + write the demo data
-   into live tables (listings / market_orders / contracts) using
-   the anonymous key, and round-trip rows back into the dashboard
-   store shapes.
+   ZVIDAMBANO Dashboard ⇄ Supabase bridge (v2 — per-account).
 
-   All operations are best-effort: any failure falls back to the
-   local demo seed. The Demo anon RLS policies in
-   supabase-dashboard-data.sql make this possible.
+   Two account modes, one bridge:
+
+   • DEMO accounts (seeded @zvida.zw personas): liveConfigured() is false.
+     Dashboards keep their state in localStorage, the badge reads DEMO, and
+     NOTHING is written to Supabase. Reset-to-default just clears the local
+     stores. Demo personas can never touch real rows.
+
+   • REAL accounts (any other email): liveConfigured() is true. Every read is
+     scoped to the signed-in user's JWT via RLS and every write carries
+     auth.uid() ownership. Accounts start empty — the dashboards show their
+     empty states until the user creates their first row.
+
+   Demo rows that leaked into the live tables in the past are excluded from
+   real queries by tagging them with meta.demo_id (meta IS NOT NULL).
    ============================================================ */
 
 const MK_FLOW = ['Placed', 'Confirmed', 'Processing', 'Shipped', 'Out for delivery', 'Delivered'];
@@ -54,6 +59,7 @@ export interface LiveOrder {
   id: string;
   ref: string;
   buyer: string;
+  userId?: string;
   address: string;
   delivery: string;
   payment: string;
@@ -102,52 +108,84 @@ export interface LiveLoad {
   slip: string;
   pics: number;
   live: number;
+  photos: string[];
+  contractId?: string;
+  deliveryId?: string;
+  driverId?: string;
+  firstWeight?: number;
+  secondWeight?: number;
 }
 
-let configured = false;
+export interface LiveAccount {
+  id: string;
+  role: string;
+  name: string;
+  isDemo: boolean;
+}
 
-export function liveConfigured(): boolean {
-  if (configured) return true;
+export interface LiveRfq {
+  id: string;
+  offtakerId: string;
+  commodity: string;
+  quantity: number;
+  unit: string;
+  maxPrice: number;
+  deliveryPoint: string;
+  deliveryDate: string;
+  status: string;
+  createdAt: string;
+}
+
+let account: LiveAccount | null = null;
+let envReady = false;
+
+function detectEnv(): boolean {
+  if (envReady) return true;
   const url = import.meta.env?.VITE_SUPABASE_URL || '';
   const key = import.meta.env?.VITE_SUPABASE_ANON_KEY || '';
-  configured = Boolean(url && key);
-  return configured;
+  envReady = Boolean(url && key);
+  return envReady;
 }
 
-interface RefMap {
-  users: { id: string; full_name: string; role: string }[];
-  commodities: { id: string; name: string }[];
+/**
+ * Real mode is on only when a signed-in, non-demo account exists AND the
+ * project env is configured. Demo accounts therefore never touch Supabase.
+ */
+export function liveConfigured(): boolean {
+  return Boolean(account && !account.isDemo && detectEnv());
 }
 
-let refMap: RefMap | null = null;
+export function setLiveAccount(a: LiveAccount | null): void {
+  account = a;
+}
 
-async function ensureRefs(): Promise<RefMap> {
-  if (refMap) return refMap;
-  const [users, commodities] = await Promise.all([
-    supabase.from('users').select('id,full_name,role'),
-    supabase.from('commodities').select('id,name'),
-  ]);
-  refMap = {
-    users: (users.data as { id: string; full_name: string; role: string }[]) || [],
-    commodities: (commodities.data as { id: string; name: string }[]) || [],
-  };
-  return refMap;
+export function getLiveAccount(): LiveAccount | null {
+  return account;
+}
+
+function myId(): string {
+  return account?.id || '';
 }
 
 function norm(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-function findUserId(map: RefMap, name: string): string | null {
-  const n = norm(name);
-  if (!n) return null;
-  let hit = map.users.find((u) => norm(u.full_name) === n);
-  if (hit) return hit.id;
-  hit = map.users.find((u) => {
-    const f = norm(u.full_name);
-    return (f.length > 2 && (f.includes(n) || n.includes(f)));
-  });
-  return hit?.id ?? null;
+interface RefMap {
+  commodities: { id: string; name: string }[];
+}
+
+let refMap: RefMap | null = null;
+
+async function ensureCommodities(): Promise<RefMap> {
+  if (refMap) return refMap;
+  try {
+    const { data } = await supabase.from('commodities').select('id,name');
+    refMap = { commodities: (data as { id: string; name: string }[]) || [] };
+  } catch {
+    refMap = { commodities: [] };
+  }
+  return refMap;
 }
 
 function findCommodityId(map: RefMap, name: string): string | null {
@@ -162,34 +200,6 @@ function findCommodityId(map: RefMap, name: string): string | null {
 
 /* ---------- products ⇄ listings ---------- */
 
-async function demoListings(): Promise<any[]> {
-  const { data } = await supabase
-    .from('listings')
-    .select('*')
-    .not('meta', 'is', null);
-  return (data as any[]) || [];
-}
-
-function productToRow(map: RefMap, p: LiveProduct): Record<string, unknown> {
-  const sellerId = findUserId(map, p.seller) || map.users.find((u) => u.role === 'supplier')?.id || null;
-  return {
-    seller_id: sellerId,
-    commodity_id: findCommodityId(map, p.name),
-    title: p.name,
-    description: `${p.name} — listed on ZVIDAMBANO`,
-    quantity: p.stock,
-    unit: p.unit,
-    asking_price: p.price,
-    category: p.category,
-    grade: null,
-    origin: null,
-    status: 'active',
-    is_distressed: false,
-    photo_url: null,
-    meta: { demo_id: p.id, seller: p.seller, rating: p.rating, reviews: p.reviews, thumb: p.thumb },
-  };
-}
-
 function rowToProduct(r: any): LiveProduct {
   const meta = r.meta || {};
   return {
@@ -198,26 +208,54 @@ function rowToProduct(r: any): LiveProduct {
     category: r.category || 'Inputs',
     price: Number(r.asking_price ?? 0),
     unit: r.unit || 'kg',
-    seller: meta.seller || 'ZVIDA Vendor',
+    seller: meta.seller || r.seller_name || 'ZVIDA Vendor',
     stock: Number(r.quantity ?? 0),
     rating: Number(meta.rating ?? 4.5),
     reviews: Number(meta.reviews ?? 0),
-    thumb: meta.thumb || 'box',
+    thumb: r.photo_url || meta.thumb || 'box',
   };
 }
 
-export async function ensureProducts(products: LiveProduct[]): Promise<LiveProduct[]> {
+function productToRow(p: LiveProduct): Record<string, unknown> {
+  return {
+    seller_id: myId() || null,
+    title: p.name,
+    description: `${p.name} — listed on ZVIDAMBANO`,
+    quantity: p.stock,
+    unit: p.unit,
+    asking_price: p.price,
+    category: p.category,
+    status: 'active',
+    is_distressed: false,
+    photo_url: p.thumb?.startsWith('http') ? p.thumb : null,
+    meta: null,
+  };
+}
+
+async function realListings(): Promise<any[]> {
+  const { data, error } = await supabase
+    .from('listings')
+    .select('*, users!listings_seller_id_fkey(full_name)')
+    .is('meta', null)
+    .eq('status', 'active');
+  if (error) return [];
+  return ((data as any[]) || []).map((r) => ({ ...r, seller_name: r.users?.full_name }));
+}
+
+async function myListings(): Promise<any[]> {
+  const { data } = await supabase
+    .from('listings')
+    .select('*, users!listings_seller_id_fkey(full_name)')
+    .eq('seller_id', myId())
+    .is('meta', null);
+  return ((data as any[]) || []).map((r) => ({ ...r, seller_name: r.users?.full_name }));
+}
+
+export async function ensureProducts(_seed: LiveProduct[]): Promise<LiveProduct[]> {
   if (!liveConfigured()) return [];
   try {
-    const map = await ensureRefs();
-    const existing = await demoListings();
-    const have = new Set(existing.map((r) => r.meta?.demo_id));
-    const rows = products.filter((p) => !have.has(p.id)).map((p) => productToRow(map, p));
-    if (rows.length) {
-      await supabase.from('listings').insert(rows as any[]);
-    }
-    const after = await demoListings();
-    return after.map(rowToProduct);
+    const rows = await realListings();
+    return rows.map(rowToProduct);
   } catch {
     return [];
   }
@@ -226,7 +264,7 @@ export async function ensureProducts(products: LiveProduct[]): Promise<LiveProdu
 export async function fetchProducts(): Promise<LiveProduct[]> {
   if (!liveConfigured()) return [];
   try {
-    const rows = await demoListings();
+    const rows = await realListings();
     return rows.map(rowToProduct);
   } catch {
     return [];
@@ -236,9 +274,12 @@ export async function fetchProducts(): Promise<LiveProduct[]> {
 export async function persistProduct(p: LiveProduct): Promise<void> {
   if (!liveConfigured()) return;
   try {
-    const map = await ensureRefs();
-    const { data } = await supabase.from('listings').select('id').eq('meta->>demo_id', p.id).maybeSingle();
-    const row = productToRow(map, p);
+    const map = await ensureCommodities();
+    const row: Record<string, unknown> = {
+      ...productToRow(p),
+      commodity_id: findCommodityId(map, p.name),
+    };
+    const { data } = await supabase.from('listings').select('id').eq('seller_id', myId()).eq('title', p.name).maybeSingle();
     if (data?.id) await supabase.from('listings').update(row).eq('id', data.id);
     else await supabase.from('listings').insert(row as any);
   } catch {
@@ -249,10 +290,166 @@ export async function persistProduct(p: LiveProduct): Promise<void> {
 export async function deleteProduct(id: string): Promise<void> {
   if (!liveConfigured()) return;
   try {
-    const { data } = await supabase.from('listings').select('id').eq('meta->>demo_id', id).maybeSingle();
-    if (data?.id) await supabase.from('listings').delete().eq('id', data.id);
+    await supabase.from('listings').delete().eq('id', id).eq('seller_id', myId());
   } catch {
     /* ignore */
+  }
+}
+
+/* ---------- my listings (own rows, any status) ---------- */
+
+export async function fetchMyListings(): Promise<LiveProduct[]> {
+  if (!liveConfigured()) return [];
+  try {
+    const rows = await myListings();
+    return rows.map(rowToProduct);
+  } catch {
+    return [];
+  }
+}
+
+/* ---------- RFQs ⇄ rfqs ---------- */
+
+function rowToRfq(r: any): LiveRfq {
+  return {
+    id: r.id,
+    offtakerId: r.offtaker_id || '',
+    commodity: r.commodity || 'Commodity',
+    quantity: Number(r.quantity ?? 0),
+    unit: r.unit || 'kg',
+    maxPrice: Number(r.max_price ?? 0),
+    deliveryPoint: r.delivery_point || '',
+    deliveryDate: r.delivery_date || '',
+    status: r.status || 'OPEN',
+    createdAt: r.created_at || '',
+  };
+}
+
+function rfqToRow(r: LiveRfq): Record<string, unknown> {
+  return {
+    offtaker_id: myId() || null,
+    commodity: r.commodity,
+    quantity: r.quantity,
+    unit: r.unit,
+    max_price: r.maxPrice,
+    delivery_point: r.deliveryPoint,
+    delivery_date: r.deliveryDate || null,
+    status: r.status || 'OPEN',
+  };
+}
+
+export async function fetchMyRfqs(): Promise<LiveRfq[]> {
+  if (!liveConfigured()) return [];
+  try {
+    const { data } = await supabase.from('rfqs').select('*').eq('offtaker_id', myId()).order('created_at', { ascending: false });
+    return ((data as any[]) || []).map(rowToRfq);
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchOpenRfqs(): Promise<LiveRfq[]> {
+  if (!liveConfigured()) return [];
+  try {
+    const { data } = await supabase.from('rfqs').select('*').eq('status', 'OPEN').order('created_at', { ascending: false });
+    return ((data as any[]) || []).map(rowToRfq);
+  } catch {
+    return [];
+  }
+}
+
+export async function persistRfq(r: LiveRfq): Promise<void> {
+  if (!liveConfigured()) return;
+  try {
+    const { offtaker_id: _o, ...row } = rfqToRow(r);
+    if (r.id) {
+      await supabase.from('rfqs').update(row).eq('id', r.id).eq('offtaker_id', myId());
+    } else {
+      await supabase.from('rfqs').insert({ ...row, offtaker_id: myId() } as any);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function deleteRfq(id: string): Promise<void> {
+  if (!liveConfigured()) return;
+  try {
+    await supabase.from('rfqs').delete().eq('id', id).eq('offtaker_id', myId());
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------- messages (support tickets) ---------- */
+
+let supportId: string | null = null;
+
+async function findSupportId(): Promise<string | null> {
+  if (supportId) return supportId;
+  try {
+    const { data } = await supabase.from('users').select('id').in('role', ['admin', 'compliance']).limit(1).maybeSingle();
+    supportId = data?.id || null;
+  } catch {
+    supportId = null;
+  }
+  return supportId;
+}
+
+export interface LiveMessage {
+  id: string;
+  senderId: string;
+  receiverId: string;
+  body: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export async function fetchMyMessages(): Promise<LiveMessage[]> {
+  if (!liveConfigured()) return [];
+  try {
+    const me = myId();
+    if (!me) return [];
+    const { data } = await supabase
+      .from('messages')
+      .select('id, sender_id, receiver_id, body, read, created_at')
+      .or(`sender_id.eq.${me},receiver_id.eq.${me}`)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    return ((data as any[]) || []).map((m) => ({
+      id: m.id,
+      senderId: m.sender_id,
+      receiverId: m.receiver_id,
+      body: m.body,
+      read: m.read,
+      createdAt: m.created_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function sendSupportMessage(body: string): Promise<LiveMessage | null> {
+  if (!liveConfigured()) return null;
+  try {
+    const receiver = await findSupportId();
+    if (!receiver) return null;
+    const { data } = await supabase
+      .from('messages')
+      .insert({ sender_id: myId(), receiver_id: receiver, body } as any)
+      .select()
+      .single();
+    if (!data) return null;
+    return {
+      id: data.id,
+      senderId: data.sender_id,
+      receiverId: data.receiver_id,
+      body: data.body,
+      read: data.read,
+      createdAt: data.created_at,
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -272,6 +469,7 @@ function orderToRow(o: LiveOrder): Record<string, unknown> {
     status: o.status,
     step: o.step,
     total: o.total,
+    user_id: myId(),
   };
 }
 
@@ -280,6 +478,7 @@ function rowToOrder(r: any): LiveOrder {
     id: r.id,
     ref: r.ref,
     buyer: r.buyer,
+    userId: r.user_id,
     address: r.address,
     delivery: r.delivery,
     payment: r.payment,
@@ -303,18 +502,11 @@ function orderSeq(rows: any[], fallback: number): number {
   return Math.max(max + 1, fallback);
 }
 
-export async function ensureOrders(orders: LiveOrder[], fallbackSeq: number): Promise<{ orders: LiveOrder[]; seq: number }> {
+export async function ensureOrders(_orders: LiveOrder[], fallbackSeq: number): Promise<{ orders: LiveOrder[]; seq: number }> {
   if (!liveConfigured()) return { orders: [], seq: fallbackSeq };
   try {
-    const { data } = await supabase.from('market_orders').select('*');
-    const existing = (data as any[]) || [];
-    const have = new Set(existing.map((r) => r.id));
-    const rows = orders.filter((o) => !have.has(o.id)).map(orderToRow);
-    if (rows.length) {
-      await supabase.from('market_orders').insert(rows as any[]);
-    }
-    const { data: after } = await supabase.from('market_orders').select('*').order('ref', { ascending: true });
-    const list = ((after as any[]) || []).map(rowToOrder);
+    const { data } = await supabase.from('market_orders').select('*').order('ref', { ascending: true });
+    const list = ((data as any[]) || []).map(rowToOrder);
     return { orders: list, seq: orderSeq(list, fallbackSeq) };
   } catch {
     return { orders: [], seq: fallbackSeq };
@@ -335,7 +527,21 @@ export async function fetchOrders(): Promise<{ orders: LiveOrder[]; seq: number 
 export async function persistOrder(o: LiveOrder): Promise<void> {
   if (!liveConfigured()) return;
   try {
-    await supabase.from('market_orders').upsert(orderToRow(o) as any, { onConflict: 'id' });
+    const { data: existing } = await supabase.from('market_orders').select('id').eq('id', o.id).maybeSingle();
+    if (existing?.id) {
+      await supabase.from('market_orders').update({
+        status: o.status,
+        step: o.step,
+        history: o.history,
+        items: o.items,
+        total: o.total,
+        delivery: o.delivery,
+        payment: o.payment,
+        address: o.address,
+      }).eq('id', o.id);
+    } else {
+      await supabase.from('market_orders').insert(orderToRow(o) as any);
+    }
   } catch {
     /* ignore */
   }
@@ -343,17 +549,16 @@ export async function persistOrder(o: LiveOrder): Promise<void> {
 
 /* ---------- consignments ⇄ contracts ---------- */
 
-function loadToRow(map: RefMap, l: LiveLoad): Record<string, unknown> {
+function loadToRow(l: LiveLoad): Record<string, unknown> {
   return {
     contract_number: l.ref,
-    farmer_id: findUserId(map, l.supplier),
-    offtaker_id: findUserId(map, l.receiver),
+    farmer_id: account?.role === 'farmer' ? myId() : null,
+    offtaker_id: account?.role === 'offtaker' ? myId() : null,
     broker_id: null,
-    commodity_id: findCommodityId(map, l.commodity),
     quantity: l.qty,
     unit: 'kg',
     farmer_price: l.unitPrice,
-    offtaker_price: l.unitPrice,
+    offtaker_price: Math.max(1, Math.round(l.unitPrice * 1.2)),
     broker_commission: null,
     status: l.status,
     meta: {
@@ -386,12 +591,14 @@ function loadToRow(map: RefMap, l: LiveLoad): Record<string, unknown> {
       slip: l.slip,
       pics: l.pics,
       live: l.live,
+      photos: l.photos || [],
     },
   };
 }
 
 function rowToLoad(r: any): LiveLoad {
   const m = r.meta || {};
+  const d = r._delivery || {};
   const num = (v: any, d = 0) => (v === null || v === undefined ? d : Number(v));
   return {
     id: 'lg' + String(r.contract_number).replace(/\D/g, '').slice(-4),
@@ -399,10 +606,10 @@ function rowToLoad(r: any): LiveLoad {
     contract: m.contract || r.contract_number,
     poRef: m.poRef || 'PO-' + String(r.contract_number).replace(/\D/g, ''),
     order: m.order || 'SO-' + r.contract_number,
-    commodity: m.commodity || 'Maize',
+    commodity: m.commodity || 'Commodity',
     art: m.art || 'grain',
-    supplier: m.supplier || 'ZVIDA Vendor',
-    receiver: m.receiver || 'ZVIDA Brokerage',
+    supplier: m.supplier || r.farmer_name || 'Farmer',
+    receiver: m.receiver || r.offtaker_name || 'Offtaker',
     from: m.from || '',
     dest: m.dest || '',
     driver: m.driver || '',
@@ -411,12 +618,12 @@ function rowToLoad(r: any): LiveLoad {
     trailer: m.trailer || '',
     weightMode: m.weightMode || 'weighbridge',
     bucketKg: num(m.bucketKg, 20),
-    weight1: num(m.weight1),
-    weight2: num(m.weight2),
+    weight1: num(m.weight1, num(d.first_weight)),
+    weight2: num(m.weight2, num(d.second_weight)),
     bags: num(m.bags),
     buckets: num(m.buckets),
     inputKg: num(m.inputKg),
-    unitPrice: num(m.unitPrice),
+    unitPrice: num(m.unitPrice, num(r.farmer_price)),
     qty: num(m.qty, num(r.quantity)),
     amount: num(m.amount),
     payTerm: m.payTerm || 'NET_7',
@@ -425,9 +632,15 @@ function rowToLoad(r: any): LiveLoad {
     step: lgSteps(r.status),
     history: m.history || [],
     due: m.due || '',
-    slip: m.slip || '',
+    slip: m.slip || d.first_weighbridge_ticket || '',
     pics: num(m.pics),
     live: num(m.live),
+    photos: Array.isArray(m.photos) ? m.photos.map(String) : [],
+    contractId: r.id,
+    deliveryId: d.id || undefined,
+    driverId: d.driver_id || undefined,
+    firstWeight: d.first_weight === null || d.first_weight === undefined ? undefined : num(d.first_weight),
+    secondWeight: d.second_weight === null || d.second_weight === undefined ? undefined : num(d.second_weight),
   };
 }
 
@@ -440,19 +653,41 @@ function loadSeq(rows: any[], fallback: number): number {
   return Math.max(max + 1, fallback);
 }
 
-export async function ensureLoads(loads: LiveLoad[], fallbackSeq: number): Promise<{ loads: LiveLoad[]; seq: number }> {
+async function realLoads(): Promise<any[]> {
+  const role = account?.role;
+  let query = supabase.from('contracts').select('*, users!contracts_farmer_id_fkey(full_name), offtakers:users!contracts_offtaker_id_fkey(full_name)');
+  /* Demo-seeded contracts carry meta.demo_id — never surface them to real accounts. */
+  query = query.filter('meta->>demo_id', 'is', null);
+  if (role === 'farmer') query = query.eq('farmer_id', myId());
+  else if (role === 'offtaker') query = query.eq('offtaker_id', myId());
+  const { data, error } = await query.order('created_at', { ascending: false });
+  if (error) return [];
+  const rows = (data as any[]) || [];
+  /* Merge the single delivery per contract (weights, driver, tickets) so the
+     driver dashboard can advance real statuses via the edge function. */
+  const ids = rows.map((r) => r.id);
+  const byContract = new Map<string, any>();
+  if (ids.length) {
+    const { data: deliveries } = await supabase
+      .from('deliveries')
+      .select('id, contract_id, driver_id, status, first_weight, first_weighbridge_ticket, second_weight, second_weighbridge_ticket, vehicle_reg, origin, destination')
+      .in('contract_id', ids);
+    ((deliveries as any[]) || []).forEach((d) => byContract.set(d.contract_id, d));
+  }
+  return rows.map((r) => ({
+    ...r,
+    _delivery: byContract.get(r.id),
+    farmer_name: r.users?.full_name,
+    offtaker_name: r.offtakers?.full_name,
+  }));
+}
+
+export async function ensureLoads(_loads: LiveLoad[], fallbackSeq: number): Promise<{ loads: LiveLoad[]; seq: number }> {
   if (!liveConfigured()) return { loads: [], seq: fallbackSeq };
   try {
-    const map = await ensureRefs();
-    const { data } = await supabase.from('contracts').select('contract_number').like('contract_number', 'LD-%');
-    const existing = new Set(((data as any[]) || []).map((r) => r.contract_number));
-    const rows = loads.filter((l) => !existing.has(l.ref)).map((l) => loadToRow(map, l));
-    if (rows.length) {
-      await supabase.from('contracts').insert(rows as any[]);
-    }
-    const { data: after } = await supabase.from('contracts').select('*').like('contract_number', 'LD-%').order('contract_number', { ascending: true });
-    const list = ((after as any[]) || []).map(rowToLoad);
-    return { loads: list, seq: loadSeq(list, fallbackSeq) };
+    const rows = await realLoads();
+    const list = rows.map(rowToLoad);
+    return { loads: list, seq: loadSeq(rows, fallbackSeq) };
   } catch {
     return { loads: [], seq: fallbackSeq };
   }
@@ -461,9 +696,8 @@ export async function ensureLoads(loads: LiveLoad[], fallbackSeq: number): Promi
 export async function fetchLoads(): Promise<{ loads: LiveLoad[]; seq: number }> {
   if (!liveConfigured()) return { loads: [], seq: 1 };
   try {
-    const { data } = await supabase.from('contracts').select('*').like('contract_number', 'LD-%').order('contract_number', { ascending: true });
-    const list = ((data as any[]) || []).map(rowToLoad);
-    return { loads: list, seq: loadSeq(list, 1) };
+    const rows = await realLoads();
+    return { loads: rows.map(rowToLoad), seq: loadSeq(rows, 1) };
   } catch {
     return { loads: [], seq: 1 };
   }
@@ -472,11 +706,42 @@ export async function fetchLoads(): Promise<{ loads: LiveLoad[]; seq: number }> 
 export async function persistLoad(l: LiveLoad): Promise<void> {
   if (!liveConfigured()) return;
   try {
-    const map = await ensureRefs();
-    await supabase
-      .from('contracts')
-      .update(loadToRow(map, l) as any)
-      .eq('contract_number', l.ref);
+    const { data: existing } = await supabase.from('contracts').select('id').eq('contract_number', l.ref).maybeSingle();
+    const row = loadToRow(l);
+    if (existing?.id) {
+      const { contract_number: _cn, ...rest } = row;
+      await supabase.from('contracts').update(rest as any).eq('id', existing.id);
+    } else {
+      await supabase.from('contracts').insert(row as any);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+/* ---------- notifications (real accounts only) ---------- */
+
+export async function fetchUnreadNotifications(): Promise<{ count: number; latest: { id: string; title: string; body?: string; type: string; read: boolean; created_at?: string }[] }> {
+  if (!liveConfigured()) return { count: 0, latest: [] };
+  try {
+    const { data } = await supabase
+      .from('notifications')
+      .select('id,title,body,type,read,created_at')
+      .eq('user_id', myId())
+      .eq('read', false)
+      .order('created_at', { ascending: false })
+      .limit(10);
+    const latest = (data as any[]) || [];
+    return { count: latest.length, latest };
+  } catch {
+    return { count: 0, latest: [] };
+  }
+}
+
+export async function markNotificationsRead(): Promise<void> {
+  if (!liveConfigured()) return;
+  try {
+    await supabase.from('notifications').update({ read: true }).eq('user_id', myId()).eq('read', false);
   } catch {
     /* ignore */
   }
@@ -490,6 +755,7 @@ export interface LiveSeed {
   orderSeq: number;
   loads: LiveLoad[];
   loadSeq: number;
+  rfqs: LiveRfq[];
 }
 
 export interface LiveResult {
@@ -498,20 +764,26 @@ export interface LiveResult {
   orderSeq: number;
   loads: LiveLoad[];
   loadSeq: number;
+  rfqs: LiveRfq[];
 }
 
 export async function syncAll(seed: LiveSeed): Promise<LiveResult | null> {
   if (!liveConfigured()) return null;
-  const [products, ord, ld] = await Promise.all([
+  const [products, ord, ld, openRfqs, myRfqs] = await Promise.all([
     ensureProducts(seed.products),
     ensureOrders(seed.orders, seed.orderSeq),
     ensureLoads(seed.loads, seed.loadSeq),
+    fetchOpenRfqs(),
+    fetchMyRfqs(),
   ]);
+  const seen = new Set<string>();
+  const rfqs = [...myRfqs, ...openRfqs].filter((r) => (seen.has(r.id) ? false : (seen.add(r.id), true)));
   return {
     products,
     orders: ord.orders,
     orderSeq: ord.seq,
     loads: ld.loads,
     loadSeq: ld.seq,
+    rfqs,
   };
 }

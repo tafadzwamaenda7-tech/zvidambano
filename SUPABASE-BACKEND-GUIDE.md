@@ -1,5 +1,7 @@
 # ZVIDAMBANO — Supabase Backend Guide
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 ## Overview
 
 With Supabase, your backend is fully managed — no Express server needed. Here's how every backend concern is handled:

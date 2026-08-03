@@ -1,5 +1,7 @@
 # Quick Integration Guide - Dashboard Files
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 This guide shows how to integrate the backend system into each dashboard HTML file.
 
 ## Farmer Dashboard Integration

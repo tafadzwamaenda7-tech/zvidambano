@@ -1,5 +1,7 @@
 # Backend Architecture & Real-Time Integration
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 This document explains the complete backend system with real-time updates, cross-dashboard communication, and business logic.
 
 ## System Architecture

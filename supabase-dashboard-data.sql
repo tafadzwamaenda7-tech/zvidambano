@@ -85,7 +85,12 @@ END $$;
 -- which recursed once RLS applied to that subquery (blowing up EVERY query with
 -- 42P17 "infinite recursion detected in policy for relation users"). Replace the
 -- inline EXISTS with a SECURITY DEFINER helper so the admin lookup bypasses RLS.
-CREATE OR REPLACE FUNCTION public.is_zvida_admin()
+-- The helper lives in the `private` schema (not exposed by PostgREST), so RLS
+-- policies can call it without it being reachable as a public RPC endpoint.
+CREATE SCHEMA IF NOT EXISTS private;
+GRANT USAGE ON SCHEMA private TO anon, authenticated, service_role;
+
+CREATE OR REPLACE FUNCTION private.is_zvida_admin()
 RETURNS boolean
 LANGUAGE sql
 STABLE
@@ -95,11 +100,10 @@ AS $$
   SELECT EXISTS (SELECT 1 FROM public.users u WHERE u.id = auth.uid() AND u.role = 'admin');
 $$;
 
-REVOKE ALL ON FUNCTION public.is_zvida_admin() FROM PUBLIC;
-
 DROP POLICY IF EXISTS "Users can read own profile" ON public.users;
 CREATE POLICY "Users can read own profile" ON public.users
-  FOR SELECT USING (auth.uid() = id OR public.is_zvida_admin());
+  FOR SELECT TO authenticated
+  USING (auth.uid() = id OR private.is_zvida_admin());
 
 -- ---------- 6. TRIGGER FUNCTIONS RUN AS OWNER ----------
 -- The audit / notification / delivery triggers insert into audit_log,

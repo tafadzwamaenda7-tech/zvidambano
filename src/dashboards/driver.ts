@@ -1,4 +1,25 @@
-import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, listRow, ledger, itemCard, profile, tabs, wf, jsBtn, registerDownload, downloadNow, JS, toast, downloadBtn, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, loadCatalog, loadCard, zdocDocuments } from './core';
+import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, listRow, ledger, itemCard, profile, tabs, wf, jsBtn, registerDownload, downloadNow, JS, toast, downloadBtn, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, disclose, pwCheck, submitBtn, onValidSubmit, formRules, restoreSubmit } from './core';
+import { resolveDashboardSession } from '../lib/session';
+
+formRules({
+  dPay: { req: true, min: 3, max: 40, msg: 'Enter your payout method, e.g. EcoCash +263 77 123 4567.' },
+  dPw: { req: true, min: 8, max: 72, msg: 'Use at least 8 characters.' },
+  dPw2: { req: true, msg: 'Re-enter your new password.' },
+});
+
+onValidSubmit('d-settings', (form) => {
+  toast('Payment settings saved');
+});
+
+onValidSubmit('d-security', (form) => {
+  const pws = [...form.querySelectorAll<HTMLInputElement>('input[type="password"]')];
+  if (pws[1] && pws[1].value !== pws[0]?.value) {
+    toast('Passwords do not match', 'error');
+    restoreSubmit(form);
+    return;
+  }
+  toast('Password updated — use it to sign in next time');
+});
 
 JS.callDispatch = () => {
   toast('Dialing ZVIDA dispatch +263 24 277 8800 — placing the call from your phone', 'info');
@@ -68,11 +89,13 @@ const P = {
     title: 'Today',
     sub: 'John Doe · Truck ABC-123',
     render: () => {
-      const mine = loadCatalog().filter((l) => l.driver === 'John Doe' && !['PAID', 'CANCELLED'].includes(l.status));
+      const base = isLiveMode() ? loadCatalog() : loadCatalog().filter((l) => l.driver === 'John Doe');
+      const mine = base.filter((l) => !['PAID', 'CANCELLED'].includes(l.status));
       return `
       <div class="dsh-offline"><span class="pulse"></span> Online · Last sync 08:00 AM</div>
       ${hero({
         kick: 'Online · GPS tracking active',
+        status: { label: 'On shift', tone: 'live' },
         title: 'Good morning, John',
         sub: 'Two loads scheduled today. Weighbridge steps are ready when you reach the farm.',
         actions: `${btn('Start Load', 'primary', 'Loading started — GPS tracking on', undefined, 'd-hero-start', 'start')}${btn('Contact ZVIDA', 'onlight', 'Opening ZVIDA support', '#support')}`,
@@ -97,7 +120,7 @@ const P = {
       ])}
       ${split(`
         ${sec('Today’s Consignments', 'View all', 'Opening all trips', undefined, '#trips')}
-        ${mine.length ? mine.map((l) => loadCard(l, 'driver')).join('') : banner('ok', 'No active consignments today.')}
+        ${mine.length ? mine.map((l) => loadCard(l, 'driver')).join('') : emptyState({ icon: ICON.truck, title: 'No active consignments today', sub: 'When ZVIDA assigns a load, it will appear here with weighbridge and GPS steps ready.', action: 'Contact dispatch', actionHref: '#support' })}
       `, `
         ${panel({
           title: 'Consignment Snapshot',
@@ -137,16 +160,16 @@ const P = {
     title: 'My Trips',
     sub: 'History & milestones',
     render: () => {
-      const mine = loadCatalog().filter((l) => l.driver === 'John Doe');
-      const active = mine.filter((l) => !['PAID', 'CANCELLED'].includes(l.status));
-      const done = mine.filter((l) => ['PAID', 'CANCELLED'].includes(l.status));
+      const base = isLiveMode() ? loadCatalog() : loadCatalog().filter((l) => l.driver === 'John Doe');
+      const active = base.filter((l) => !['PAID', 'CANCELLED'].includes(l.status));
+      const done = base.filter((l) => ['PAID', 'CANCELLED'].includes(l.status));
       return `
       ${tabs([{ label: 'Active', badge: active.length, active: true }, { label: 'Completed', badge: done.length + 23 }], 'dtrips')}
       <div data-tab-group="dtrips" data-tab="Active">
-      ${active.length ? active.map((l) => loadCard(l, 'driver')).join('') : banner('ok', 'No active trips — new consignments will appear here.')}
+      ${active.length ? active.map((l) => loadCard(l, 'driver')).join('') : emptyState({ icon: ICON.trips, title: 'No active trips', sub: 'New consignments assigned to you will appear here, ready to start.', action: 'View completed trips' })}
       </div>
       <div data-tab-group="dtrips" data-tab="Completed" style="display:none">
-      ${done.length ? done.map((l) => loadCard(l, 'driver')).join('') : ''}
+      ${done.length ? done.map((l) => loadCard(l, 'driver')).join('') : emptyState({ icon: ICON.check, title: 'No completed trips yet', sub: 'Trips you finish will be collected here with their milestones.' })}
       ${sec('Trip History')}
       ${panel({
         body: `
@@ -174,12 +197,13 @@ const P = {
     title: 'Weighbridge',
     sub: 'First & second weights',
     render: () => {
-      const mine = loadCatalog().filter((l) => l.driver === 'John Doe' && !['PAID', 'CANCELLED'].includes(l.status));
+      const base = isLiveMode() ? loadCatalog() : loadCatalog().filter((l) => l.driver === 'John Doe');
+      const mine = base.filter((l) => !['PAID', 'CANCELLED'].includes(l.status));
       const atScale = mine.filter((l) => ['LOADING', 'WEIGHED_1', 'OFFLOADING'].includes(l.status));
       return `
       ${banner('info', 'Record the first weight at loading and the second weight at offloading. Scale loads use bucket counts. The system calculates net and amount automatically.')}
       ${sec('Weighbridge Queue', 'My trips', 'Opening your trips', mine.length, '#trips')}
-      ${(atScale.length ? atScale : mine).length ? (atScale.length ? atScale : mine).map((l) => loadCard(l, 'driver')).join('') : banner('ok', 'No loads at the scale right now.')}
+      ${(atScale.length ? atScale : mine).length ? (atScale.length ? atScale : mine).map((l) => loadCard(l, 'driver')).join('') : emptyState({ icon: ICON.weighbridge, title: 'No loads at the scale right now', sub: 'When a load reaches the weighbridge step, first and second weights will be captured here.', action: 'View trips', actionHref: '#trips' })}
       ${sec('System Calculates')}
       ${panel({
         body: ledger([
@@ -229,27 +253,39 @@ const P = {
     icon: ICON.settings,
     title: 'Settings',
     sub: 'Profile, vehicle & payments',
-    render: () => `
+    render: () => {
+      const live = isLiveMode();
+      const name = live ? (liveUserName() || 'Driver') : 'John Doe';
+      return `
       ${split(`
         ${sec('Profile')}
         ${panel({
           title: 'Personal',
           icon: ICON.users,
-          body: profile([
-            { k: 'Name', v: 'John Doe' },
-            { k: 'Phone', v: '+263 77 123 4567' },
-            { k: 'Email', v: 'john.doe@driver.com' },
-            { k: 'License', v: `DL-2024-0042 ${pill('Verified', 'green')}` },
-          ]),
+          body: live
+            ? profile([
+                { k: 'Name', v: name },
+                { k: 'Phone', v: 'On file with ZVIDA' },
+                { k: 'Email', v: 'On file with ZVIDA' },
+                { k: 'License', v: `${pill('Pending verification', 'amber')}` },
+              ])
+            : profile([
+                { k: 'Name', v: 'John Doe' },
+                { k: 'Phone', v: '+263 77 123 4567' },
+                { k: 'Email', v: 'john.doe@driver.com' },
+                { k: 'License', v: `DL-2024-0042 ${pill('Verified', 'green')}` },
+              ]),
         })}
         ${sec('Vehicle')}
         ${panel({
           title: 'Truck',
           icon: ICON.truck,
-          body: profile([
-            { k: 'Truck', v: 'ABC-123 · Scania R450 (White)' },
-            { k: 'Trailer', v: 'XYZ-789 · Grain Tipper, 35t' },
-          ]),
+          body: live
+            ? banner('info', 'Assign your truck from the Marketplace — ZVIDA records the plate, trailer and weight mode on your first trip.')
+            : profile([
+                { k: 'Truck', v: 'ABC-123 · Scania R450 (White)' },
+                { k: 'Trailer', v: 'XYZ-789 · Grain Tipper, 35t' },
+              ]),
         })}
       `, `
         ${sec('Payment Details')}
@@ -257,17 +293,39 @@ const P = {
           title: 'Payouts',
           icon: ICON.wallet,
           body: `
-            ${field('Bank / Mobile money', input('EcoCash +263 77 123 4567'))}
-            <div class="dsh-btn-row">${jsBtn('Save Changes', 'primary', 'saveSettings', '', 'Settings saved')}</div>`,
+            <div data-form>
+            ${field('Bank / Mobile money', input(live ? '' : 'EcoCash +263 77 123 4567', live ? 'e.g. EcoCash +263 7X XXX XXXX' : undefined, { val: 'dPay' }))}
+            <div class="dsh-btn-row">${submitBtn('Save Changes', 'primary', 'd-settings')}</div>
+            </div>`,
+        })}
+        ${sec('Security')}
+        ${panel({
+          title: 'Change password',
+          icon: ICON.shield,
+          body: `
+            <div data-form>
+            ${field('New password', input(undefined, 'Min 8 characters', { val: 'dPw', type: 'password' }))}
+            ${pwCheck()}
+            ${field('Confirm new password', input(undefined, 'Repeat your new password', { val: 'dPw2', type: 'password' }))}
+            <div class="dsh-btn-row">${submitBtn('Update Password', 'primary', 'd-security')}</div>
+            ${disclose({
+              title: 'Password rules',
+              summary: 'Why we ask for a strong password',
+              body: 'ZVIDA protects your payout details and contract data. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps your account safe.',
+            })}
+            </div>`,
         })}
         ${panel({
           title: 'Documents',
           icon: ICON.file,
-          body: `${listRow(ICON.file, 'Driver license', 'Valid until Dec 2026', downloadBtn('View', 'ghost sm', 'd-lic'), 'plain')}
+          body: live
+            ? banner('info', 'Your driver license and insurance certificates will appear here once ZVIDA verifies them.')
+            : `${listRow(ICON.file, 'Driver license', 'Valid until Dec 2026', downloadBtn('View', 'ghost sm', 'd-lic'), 'plain')}
             ${listRow(ICON.shield, 'Insurance', 'Comprehensive · ABC-123', downloadBtn('View', 'ghost sm', 'd-ins'), 'plain')}`,
         })}
       `)}
-    `,
+    `;
+    },
   },
   support: {
     id: 'support',
@@ -321,13 +379,15 @@ const P = {
       ${banner('info', 'Pick up shipped orders from ZVIDA and deliver them to the customer. Confirm delivery when the customer signs.')}
       ${sec('Ready to Deliver', 'View trips', 'Opening your trips', ready.length + onRoad.length, '#trips')}
       ${chips(['All', 'Active', 'Pending', 'Loading', 'Offloading', 'Complete'], 0, 'dmkt')}
-      ${orders.map((o) => marketOrderGroup(o, 'driver', 'dmkt', marketBucket(o.status))).join('')}
-      ${ready.length + onRoad.length === 0 ? banner('ok', 'No ZVIDA deliveries right now. New shipped orders will appear here.') : ''}
+      ${ready.length + onRoad.length === 0 ? emptyState({ icon: ICON.box, title: 'No ZVIDA deliveries right now', sub: 'When customers place orders, shipped orders will be ready here for you to pick up and deliver.', action: 'View trips', actionHref: '#trips' }) : orders.map((o) => marketOrderGroup(o, 'driver', 'dmkt', marketBucket(o.status))).join('')}
     `;
     },
   },
 };
 
+void (async () => {
+const session = await resolveDashboardSession('driver');
+if (!session) return;
 boot({
   key: 'driver',
   name: 'John',
@@ -341,9 +401,12 @@ boot({
   accentRgb: '234, 88, 12',
   gradientEnd: '#f97316',
   pages: [P.today, P.marketplace, P.trips, P.weighbridge, P.documents, P.earnings, P.settings, P.support],
+  keepEmpty: ['marketplace', 'weighbridge', 'settings', 'support'],
   navGroups: [
     { label: 'Overview', pages: ['today', 'marketplace'] },
     { label: 'Trips', pages: ['trips', 'weighbridge', 'documents', 'earnings'] },
     { label: 'Account', pages: ['settings', 'support'] },
   ],
+  session,
 });
+})();

@@ -3,6 +3,7 @@
  */
 
 import { supabase } from './supabase';
+import { notificationsCRUD } from './crud';
 
 export async function sendEmailNotification(to: string, type: string, data?: any) {
   const { error } = await supabase.functions.invoke('send-email', {
@@ -25,13 +26,11 @@ export async function notifyUser(
   type: string = 'info',
   options?: { email?: boolean; sms?: boolean; phone?: string }
 ) {
-  const { error } = await supabase.from('notifications').insert({
-    user_id: userId,
-    title,
-    body,
-    type,
-  });
-  if (error) console.error('[Notifications] In-app failed:', error);
+  try {
+    await notificationsCRUD.create({ user_id: userId, title, body, type });
+  } catch (err) {
+    console.error('[Notifications] In-app failed:', err);
+  }
 
   if (options?.email) {
     const { data: user } = await supabase.from('users').select('email').eq('id', userId).single();
@@ -46,29 +45,26 @@ export async function notifyUser(
 }
 
 export async function getNotifications(userId: string, unreadOnly: boolean = false) {
-  let query = supabase.from('notifications').select('*').eq('user_id', userId);
-  if (unreadOnly) query = query.eq('read', false);
-  const { data, error } = await query.order('created_at', { ascending: false });
-  if (error) throw error;
-  return data;
+  try {
+    if (unreadOnly) return await notificationsCRUD.getUnread(userId);
+    return await notificationsCRUD.getByUser(userId);
+  } catch (err) {
+    throw err;
+  }
 }
 
 export async function markNotificationRead(id: string) {
-  const { data, error } = await supabase
-    .from('notifications')
-    .update({ read: true })
-    .eq('id', id)
-    .select()
-    .single();
-  if (error) throw error;
-  return data;
+  try {
+    return await notificationsCRUD.markAsRead(id);
+  } catch (err) {
+    throw err;
+  }
 }
 
 export async function markAllNotificationsRead(userId: string) {
-  const { error } = await supabase
-    .from('notifications')
-    .update({ read: true })
-    .eq('user_id', userId)
-    .eq('read', false);
-  if (error) throw error;
+  try {
+    await notificationsCRUD.markAllAsRead(userId);
+  } catch (err) {
+    throw err;
+  }
 }

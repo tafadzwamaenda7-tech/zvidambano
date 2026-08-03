@@ -1,5 +1,7 @@
 # ZVIDA PWA - Complete Backend System (WIRED & READY)
 
+![ZVIDAMBANO logo](public/logo.jpeg)
+
 ## ✅ What's Implemented
 
 A **fully-wired backend system** with real-time updates, cross-dashboard communication, and business logic for all user roles.
