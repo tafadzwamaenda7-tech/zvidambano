@@ -242,3 +242,112 @@ export async function logout(): Promise<void> {
     authState.error = error instanceof Error ? error.message : 'Logout failed';
   }
 }
+
+/* ---------- Multi-factor authentication (TOTP) ---------- */
+
+export interface MfaFactorInfo {
+  id: string;
+  type: string;
+  friendlyName: string | null;
+  createdAt: string | null;
+}
+
+export interface MfaStatus {
+  aal: string | null;
+  nextLevel: string | null;
+  factors: MfaFactorInfo[];
+}
+
+export async function getMfaStatus(): Promise<MfaStatus> {
+  const { data: aal, error: aalErr } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aalErr) return { aal: 'aal1', nextLevel: null, factors: [] };
+  const { data: factors, error: factorsErr } = await supabase.auth.mfa.listFactors();
+  if (factorsErr) return { aal: aal.currentLevel, nextLevel: aal.nextLevel, factors: [] };
+  return {
+    aal: aal.currentLevel,
+    nextLevel: aal.nextLevel,
+    factors: (factors.totp || []).map((f) => ({
+      id: f.id,
+      type: f.factor_type,
+      friendlyName: f.friendly_name ?? null,
+      createdAt: f.created_at,
+    })),
+  };
+}
+
+/** True when the signed-in session must be stepped up to AAL2 before it is usable. */
+export async function mfaRequired(): Promise<boolean> {
+  const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (error) return false;
+  return data.currentLevel === 'aal1' && data.nextLevel === 'aal2';
+}
+
+export interface EnrollResult {
+  ok: boolean;
+  factorId?: string;
+  qr?: string;
+  secret?: string;
+  uri?: string;
+  error?: string;
+}
+
+export async function enrollTotp(friendlyName = 'Authenticator'): Promise<EnrollResult> {
+  const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName });
+  if (error || !data) {
+    return { ok: false, error: error?.message || 'Could not start two-factor setup.' };
+  }
+  const factorId = data.id;
+  const uri = data.totp?.uri || '';
+  const secret = data.totp?.secret || '';
+  return { ok: true, factorId, qr: data.totp?.qr_code, secret, uri };
+}
+
+/** Verifies a fresh enrollment with a code from the authenticator app and activates the factor. */
+export async function verifyTotpEnrollment(factorId: string, code: string): Promise<boolean> {
+  const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: code.replace(/\s/g, '') });
+  if (!error) {
+    await logAuthEvent({ event_type: 'mfa_setup', user_id: authState.user?.id });
+    return true;
+  }
+  return false;
+}
+
+/** Signs in a pending AAL1 session by verifying a TOTP code. */
+export async function signInWithTotp(code: string): Promise<{ ok: boolean; error: string | null }> {
+  const { data: factors, error: listErr } = await supabase.auth.mfa.listFactors();
+  const totp = factors?.totp?.filter((f) => f.status === 'verified') || [];  if (listErr || !totp.length) {
+    return { ok: false, error: listErr?.message || 'No active two-factor authenticator found on this account.' };
+  }
+  const factor = totp[0];
+  const { error } = await supabase.auth.mfa.challengeAndVerify({ factorId: factor.id, code: code.replace(/\s/g, '') });
+  if (error) return { ok: false, error: error.message };
+  await logAuthEvent({ event_type: 'mfa_verified', user_id: authState.user?.id });
+  return { ok: true, error: null };
+}
+
+export async function unEnrollMfa(factorId: string): Promise<{ ok: boolean; error: string | null }> {
+  const { error } = await supabase.auth.mfa.unenroll({ factorId });
+  if (error) return { ok: false, error: error.message };
+  await logAuthEvent({ event_type: 'mfa_disabled', user_id: authState.user?.id });
+  return { ok: true, error: null };
+}
+
+/* ---------- Social sign-in (OAuth) ---------- */
+
+export type OAuthProvider = 'google' | 'apple';
+
+export async function signInWithOAuth(provider: OAuthProvider): Promise<{ ok: boolean; error: string | null }> {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo: `${window.location.origin}/login.html`,
+      skipBrowserRedirect: false,
+    },
+  });
+  if (error) {
+    await logAuthEvent({ event_type: 'oauth_failure', metadata: { provider, error: error.message } });
+    return { ok: false, error: error.message };
+  }
+  await logAuthEvent({ event_type: 'oauth_initiated', metadata: { provider } });
+  return { ok: true, error: null };
+}

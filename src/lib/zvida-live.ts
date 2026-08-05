@@ -89,7 +89,7 @@ export interface LiveLoad {
   phone: string;
   truck: string;
   trailer: string;
-  weightMode: 'weighbridge' | 'scale';
+  weightMode: 'weighbridge' | 'scale' | 'buckets';
   bucketKg: number;
   weight1: number;
   weight2: number;

@@ -3,7 +3,7 @@ import './design-system.css';
 import { initDesignSystem, FormValidator, openModal, closeModal, toast } from './ui-utils';
 import ZvidaSearch from './search';
 import { registerServiceWorker, onOnlineStatusChange } from './lib/pwa';
-import { initializeAuth, onAuthChange, getAuthState } from './lib/auth';
+import { initializeAuth, onAuthChange, getAuthState, mfaRequired } from './lib/auth';
 import { supabase } from './lib/supabase';
 import { initAuthUI } from './lib/auth-ui';
 import { canAccessDashboard, type UserRole } from './lib/auth-utils';
@@ -536,11 +536,16 @@ function init(): void {
   });
 
   // Listen to auth changes
-  const unsubscribe = onAuthChange((session: any) => {
+  const unsubscribe = onAuthChange(async (session: any) => {
     if (session) {
       console.log('[Auth] User logged in:', session.user?.email);
-      // Magic-link callback or a returning session on the login page: bounce to the dashboard.
+      // Magic-link/OAuth callback or a returning session on the login page:
+      // bounce to the dashboard only once any MFA step-up is complete.
       if (window.location.pathname.endsWith('login.html')) {
+        if (await mfaRequired()) {
+          window.dispatchEvent(new CustomEvent('zvida:mfa-required'));
+          return;
+        }
         const role: string | null = session.user?.user_metadata?.role ?? null;
         const dest = canAccessDashboard(role as UserRole);
         if (dest) window.location.href = dest;

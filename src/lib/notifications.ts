@@ -24,7 +24,7 @@ export async function notifyUser(
   title: string,
   body: string,
   type: string = 'info',
-  options?: { email?: boolean; sms?: boolean; phone?: string }
+  options?: { email?: boolean; sms?: boolean; phone?: string; url?: string }
 ) {
   try {
     await notificationsCRUD.create({ user_id: userId, title, body, type });
@@ -41,6 +41,23 @@ export async function notifyUser(
 
   if (options?.sms && options?.phone) {
     await sendSMSNotification(options.phone, `${title}: ${body}`);
+  }
+
+  // Web push (fire-and-forget): only attempted when a signed-in session exists.
+  void sendPushNotification(userId, title, body, options?.url);
+}
+
+/** Deliver a push to the user's registered browser subscriptions. */
+export async function sendPushNotification(userId: string, title: string, body?: string, url?: string) {
+  try {
+    const { data } = await supabase.auth.getSession();
+    if (!data.session) return;
+    const { error } = await supabase.functions.invoke('send-push', {
+      body: { userId, title, body: body || '', url: url || '/' },
+    });
+    if (error) console.error('[Notifications] Push failed:', error);
+  } catch (err) {
+    console.error('[Notifications] Push failed:', err);
   }
 }
 

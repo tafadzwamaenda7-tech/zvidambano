@@ -1,5 +1,7 @@
 /// <reference lib="webworker" />
 
+const sw = self as unknown as ServiceWorkerGlobalScope;
+
 const CACHE_NAME = 'zvida-v1';
 const API_CACHE_NAME = 'zvida-api-v1';
 const RUNTIME_CACHE_NAME = 'zvida-runtime-v1';
@@ -12,7 +14,7 @@ const STATIC_ASSETS = [
 ];
 
 // Install event - cache static assets
-self.addEventListener('install', (event: ExtendableEvent) => {
+sw.addEventListener('install', (event: ExtendableEvent) => {
   console.log('[Service Worker] Installing...');
 
   event.waitUntil(
@@ -22,13 +24,13 @@ self.addEventListener('install', (event: ExtendableEvent) => {
         console.warn('[Service Worker] Error caching static assets:', err);
       });
       // Force SW to activate immediately
-      self.skipWaiting();
+      sw.skipWaiting();
     })()
   );
 });
 
 // Activate event - clean up old caches
-self.addEventListener('activate', (event: ExtendableEvent) => {
+sw.addEventListener('activate', (event: ExtendableEvent) => {
   console.log('[Service Worker] Activating...');
 
   event.waitUntil(
@@ -43,13 +45,13 @@ self.addEventListener('activate', (event: ExtendableEvent) => {
       );
 
       // Claim all clients
-      self.clients.claim();
+      sw.clients.claim();
     })()
   );
 });
 
 // Fetch event - implement caching strategy
-self.addEventListener('fetch', (event: FetchEvent) => {
+sw.addEventListener('fetch', (event: FetchEvent) => {
   const { request } = event;
   const url = new URL(request.url);
 
@@ -171,9 +173,9 @@ async function handleAssetRequest(request: Request): Promise<Response> {
 }
 
 // Handle messages from clients
-self.addEventListener('message', (event: ExtendableMessageEvent) => {
+sw.addEventListener('message', (event: ExtendableMessageEvent) => {
   if (event.data && event.data.type === 'SKIP_WAITING') {
-    self.skipWaiting();
+    sw.skipWaiting();
   }
 
   if (event.data && event.data.type === 'CLEAR_CACHE') {
@@ -184,4 +186,69 @@ self.addEventListener('message', (event: ExtendableMessageEvent) => {
       })()
     );
   }
+});
+
+/* ---------- Web push notifications ---------- */
+
+function pushData(body: unknown): { title: string; body: string; url: string } {
+  if (typeof body === 'string') {
+    try {
+      const parsed = JSON.parse(body);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          title: String(parsed.title || 'ZVIDA'),
+          body: String(parsed.body || ''),
+          url: String(parsed.url || '/'),
+        };
+      }
+    } catch {
+      return { title: 'ZVIDA', body, url: '/' };
+    }
+  }
+  if (body && typeof body === 'object') {
+    const b = body as { title?: unknown; body?: unknown; url?: unknown };
+    return {
+      title: String(b.title || 'ZVIDA'),
+      body: String(b.body || ''),
+      url: String(b.url || '/'),
+    };
+  }
+  return { title: 'ZVIDA', body: '', url: '/' };
+}
+
+sw.addEventListener('push', (event: PushEvent) => {
+  let data = { title: 'ZVIDA', body: '', url: '/' };
+  try {
+    data = pushData(event.data ? event.data.json() : null);
+  } catch {
+    data = event.data ? pushData(event.data.text()) : data;
+  }
+
+  event.waitUntil(
+    sw.registration.showNotification(data.title, {
+      body: data.body,
+      icon: '/zvida-mark.png',
+      badge: '/zvida-mark.png',
+      tag: data.url,
+      data: { url: data.url },
+    })
+  );
+});
+
+sw.addEventListener('notificationclick', (event: NotificationEvent) => {
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || '/';
+  event.waitUntil(
+    (async () => {
+      const all = await sw.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of all) {
+        if ('focus' in client) {
+          await client.navigate(target);
+          await client.focus();
+          return;
+        }
+      }
+      await sw.clients.openWindow(target);
+    })()
+  );
 });

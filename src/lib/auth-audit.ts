@@ -14,7 +14,12 @@ export type AuthEventType =
   | 'magic_link_sent'
   | 'magic_link_failure'
   | 'password_reset_sent'
-  | 'verification_resend';
+  | 'verification_resend'
+  | 'mfa_verified'
+  | 'mfa_disabled'
+  | 'mfa_setup'
+  | 'oauth_initiated'
+  | 'oauth_failure';
 
 export interface AuthEventPayload {
   event_type: AuthEventType;

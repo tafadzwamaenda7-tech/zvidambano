@@ -1,4 +1,4 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments, emptyState, formRules, FORM_RULES, checkField, refresh, profile, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, accountHeader, prefsPanel } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments, emptyState, formRules, FORM_RULES, checkField, refresh, profile, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, accountHeader, prefsPanel, mfaPanel } from './core';
 import { resolveDashboardSession } from '../lib/session';
 import { liveConfigured, getLiveAccount } from '../lib/zvida-live';
 import { supabase } from '../lib/supabase';
@@ -674,6 +674,11 @@ const P = {
               body: 'ZVIDA protects settlement data and platform credentials. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps the platform safe.',
             })}
             </div>`,
+        })}
+        ${panel({
+          title: 'Two-factor authentication',
+          icon: ICON.shield,
+          body: mfaPanel(),
         })}
         ${panel({
           title: 'Documents',

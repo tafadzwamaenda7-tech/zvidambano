@@ -1,4 +1,4 @@
-import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, listRow, ledger, itemCard, profile, tabs, wf, jsBtn, registerDownload, downloadNow, JS, toast, downloadBtn, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, disclose, pwCheck, submitBtn, onValidSubmit, formRules, restoreSubmit } from './core';
+import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, listRow, ledger, itemCard, profile, tabs, wf, jsBtn, registerDownload, downloadNow, JS, toast, downloadBtn, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, disclose, pwCheck, submitBtn, onValidSubmit, formRules, restoreSubmit, mfaPanel } from './core';
 import { resolveDashboardSession } from '../lib/session';
 
 formRules({
@@ -314,6 +314,11 @@ const P = {
               body: 'ZVIDA protects your payout details and contract data. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps your account safe.',
             })}
             </div>`,
+        })}
+        ${panel({
+          title: 'Two-factor authentication',
+          icon: ICON.shield,
+          body: mfaPanel(),
         })}
         ${panel({
           title: 'Documents',

@@ -4,7 +4,7 @@
  * signup wizard and role-based redirects.
  */
 
-import { login, register, sendMagicLink, getAuthState, type SignupMetadata } from './auth';
+import { login, register, sendMagicLink, getAuthState, mfaRequired, signInWithTotp, signInWithOAuth, type OAuthProvider, type SignupMetadata } from './auth';
 import { getRemember, setRemember } from './supabase';
 import { canAccessDashboard, requestPasswordReset, resendEmailVerification, type UserRole } from './auth-utils';
 import {
@@ -501,7 +501,7 @@ function switchPanel(target: string): void {
   if (target === 'signup') signupReset?.();
   if (target === 'login') loginReset?.();
   const tabbar = document.querySelector<HTMLElement>('[data-auth-tabbar]');
-  if (tabbar) tabbar.hidden = target === 'verify';
+  if (tabbar) tabbar.hidden = target === 'verify' || target === 'mfa';
   document.querySelectorAll<HTMLElement>('[data-auth-tab]').forEach((t) => {
     const active = t.dataset.authTab === target;
     t.classList.toggle('active', active);
@@ -667,6 +667,12 @@ function initLoginForm(): void {
       const ok = await login(email, password);
       if (ok) {
         resetLoginCooldown();
+        if (await mfaRequired()) {
+          const codeEl = document.getElementById('mfa-code') as HTMLInputElement | null;
+          if (codeEl) codeEl.value = '';
+          switchPanel('mfa');
+          return;
+        }
         redirectToDashboard(getAuthState().role);
         return;
       }
@@ -682,6 +688,106 @@ function initLoginForm(): void {
     } finally {
       setBusy(submit, false);
     }
+  });
+}
+
+/* ---------- Two-factor authentication (TOTP challenge) ---------- */
+
+function initMfaPanel(): void {
+  const form = document.getElementById('mfa-form') as HTMLFormElement | null;
+
+  const clearCode = (): void => {
+    const el = document.getElementById('mfa-code') as HTMLInputElement | null;
+    if (el) { el.value = ''; el.focus(); }
+  };
+
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideAuthError();
+      const code = (form.elements.namedItem('code') as HTMLInputElement | null)?.value.trim() || '';
+      const codeEl = form.querySelector<HTMLElement>('[name="code"]');
+      if (!/^\d{6}$/.test(code)) {
+        markInput(form, 'code', 'err');
+        msgFor(form, 'mfa').err('Enter the 6-digit code from your authenticator app.');
+        return;
+      }
+      markInput(form, 'code', 'ok');
+      msgFor(form, 'mfa').clear();
+      const submit = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+      setBusy(submit, true, 'Verify & Sign In', 'Verifying…');
+      try {
+        const result = await signInWithTotp(code);
+        if (result.ok) {
+          resetLoginCooldown();
+          redirectToDashboard(getAuthState().role);
+          return;
+        }
+        markInput(form, 'code', 'err');
+        msgFor(form, 'mfa').err(result.error || 'That code was not accepted. Try again.');
+        codeEl?.focus();
+      } catch {
+        msgFor(form, 'mfa').err('Could not verify the code. Please try again.');
+      } finally {
+        setBusy(submit, false);
+      }
+    });
+
+    const codeInput = form.elements.namedItem('code') as HTMLInputElement | null;
+    codeInput?.addEventListener('input', () => {
+      const v = codeInput.value.replace(/\D/g, '');
+      if (codeInput.value !== v) codeInput.value = v;
+      markInput(form, 'code', 'clear');
+      msgFor(form, 'mfa').clear();
+      hideAuthError();
+    });
+    codeInput?.addEventListener('blur', () => {
+      const v = codeInput.value.trim();
+      if (v && !/^\d{6}$/.test(v)) {
+        markInput(form, 'code', 'err');
+        msgFor(form, 'mfa').err('Codes are 6 digits long.');
+      }
+    });
+  }
+
+  document.querySelectorAll<HTMLElement>('[data-action="mfa-back"]').forEach((el) => {
+    el.addEventListener('click', async () => {
+      const { logout } = await import('./auth');
+      try { await logout(); } catch { /* ignore — still leave the panel */ }
+      switchPanel('login');
+    });
+  });
+
+  window.addEventListener('zvida:mfa-required', () => {
+    clearCode();
+    switchPanel('mfa');
+  });
+}
+
+/* ---------- Social sign-in (OAuth) ---------- */
+
+function initOAuth(): void {
+  document.querySelectorAll<HTMLElement>('[data-oauth-provider]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      hideAuthError();
+      const provider = btn.dataset.oauthProvider as OAuthProvider;
+      setBusy(btn as HTMLButtonElement, true);
+      try {
+        const result = await signInWithOAuth(provider);
+        if (!result.ok) {
+          const msg = result.error || '';
+          showAuthError(
+            /configur|not enabled|unsupported|disabled/i.test(msg)
+              ? 'Social sign-in is not configured on this account yet — use email and password.'
+              : msg || 'Could not start ' + provider + ' sign-in.',
+          );
+        }
+      } catch {
+        showAuthError('Could not start social sign-in. Please try again.');
+      } finally {
+        setBusy(btn as HTMLButtonElement, false);
+      }
+    });
   });
 }
 
@@ -1193,6 +1299,8 @@ export function initAuthUI(): void {
   initPasswordToggles();
   initCapsLockDetection();
   initPasswordGenerator();
+  initMfaPanel();
+  initOAuth();
 }
 
 export async function signOutAndRedirect(): Promise<void> {

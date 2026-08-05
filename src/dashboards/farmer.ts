@@ -1,4 +1,5 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, pwCheck, disclose, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketMyOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, liveUserId, marketAddProduct, marketRemoveProduct, asyncFills, submitBtn, onValidSubmit, formRules, takePendingUpload, restoreSubmit, accountHeader, prefsPanel, weighbridgeSelect, WEIGHBRIDGES } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, pwCheck, disclose, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketMyOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, liveUserId, marketAddProduct, marketRemoveProduct, asyncFills, submitBtn, onValidSubmit, formRules, takePendingUpload, restoreSubmit, accountHeader, prefsPanel, WEIGHBRIDGES, weighMethodField, weightModeLabel, warehouseReceiptsPanel, mfaPanel } from './core';
+import type { WeightMode } from './core';
 import { loadSettings, loadFarm, saveSettings, saveProfile, saveFarm, changePassword, formValue, radioValue } from '../lib/settings';
 import { fetchMyMessages, sendSupportMessage } from '../lib/zvida-live';
 import type { PillTone } from './core';
@@ -102,7 +103,7 @@ formRules({
   fGrade: { req: true, msg: 'Select a grade.' },
   fMoist: { num: { min: 0, max: 60 }, msg: 'Moisture must be between 0 and 60%.' },
   fReserve: { req: true, num: { min: 0.01, max: 100000 }, msg: 'Enter a reserve price per ton.' },
-  fWeight: { req: true, msg: 'Choose your nearest weighbridge.' },
+  fWeight: { msg: 'Choose your nearest weighbridge.' },
   fName: { req: true, min: 2, max: 80, msg: 'Enter your full name.' },
   fPhone: { min: 7, max: 40, msg: 'Enter a valid phone number.' },
   fFarm: { req: true, min: 2, max: 80, msg: 'Enter your farm name.' },
@@ -117,8 +118,13 @@ formRules({
 onValidSubmit('f-listing', (form) => {
   const controls = [...form.querySelectorAll<HTMLInputElement | HTMLSelectElement>('.dsh-input, .dsh-select')];
   const img = takePendingUpload('flist-img');
-  const wb = (controls[5]?.value || '').trim();
-  const wbNote = wb ? ` · Deliver to ${wb}` : '';
+  const method = (form.querySelector<HTMLInputElement>('input[data-wm-mode]:checked')?.value || 'weighbridge') as WeightMode;
+  const wb = (form.querySelector<HTMLSelectElement>('[data-val="fWeighWb"]')?.value || '').trim();
+  const wbNote = method === 'weighbridge' ? (wb ? ` · Deliver to ${wb}` : '') : ` · ${weightModeLabel(method)}`;
+  if (method === 'weighbridge' && !wb) {
+    toast('Choose your nearest weighbridge', 'warn');
+    return;
+  }
   if (isLiveMode()) {
     const commodity = (controls[0]?.value || 'Maize').trim();
     const qty = parseFloat(controls[1]?.value || '0') || 0;
@@ -153,7 +159,7 @@ onValidSubmit('f-listing', (form) => {
       thumb: img || 'grain',
       badge: 'PENDING APPROVAL',
       badgeTone: 'amber',
-      meta: `Submitted just now · Weighbridge: ${wb || 'Ruwa'} · Awaiting ZVIDA approval.`,
+      meta: `Submitted just now · ${method === 'weighbridge' ? 'Weighbridge: ' + (wb || 'Ruwa') : weightModeLabel(method)} · Awaiting ZVIDA approval.`,
       foot: `${btn('Withdraw', 'danger sm', 'Listing withdrawn', undefined, 'f-soya-new', 'withdraw')}`,
     });
     toast('Listing submitted for approval');
@@ -498,8 +504,7 @@ const P = {
               ${field('Moisture %', input('14.5', undefined, { val: 'fMoist', type: 'number', min: '0', step: '0.1' }))}
               ${field('Reserve Price ($/t)', input(LIST_EDIT ? SOYA.reserve : '200.00', undefined, { val: 'fReserve', type: 'number', min: '0', step: '1' }))}
             </div>
-            ${field('Nearest weighbridge', `${weighbridgeSelect('fWeight', { ph: true })}
-            <span class="dsh-hint" data-wb-note="fWeight">Certified ZVIDA weighbridges near: ${WEIGHBRIDGES.map((w) => w.town).join(' · ')}. Pick the closest to cut transport cost.</span>`)}
+            ${field('Weighing method', weighMethodField('fWeigh', { near: true }))}
             ${LIST_EDIT ? banner('ok', `Editing your <b>Soya</b> listing — update and save.`) : banner('info', live ? 'ZVIDA reviews every listing before matching it to buyers.' : 'ZVIDA is currently offering <b>$295/t</b> for Maize.')}
             ${field('Collection type', `
               <div class="dsh-radio-row">
@@ -772,6 +777,7 @@ const P = {
         { label: 'Seed Loan', value: '$400', icon: ICON.reports, delta: 'Auto-deducted', up: false, spark: [10, 10, 10, 10, 10, 10, 10], foot: 'Due at payout', open: '#finance' },
         { label: 'Total Earned', value: '$12,580', icon: ICON.trendingUp, delta: 'Since January', up: true, spark: [20, 30, 28, 40, 52, 60, 66], foot: 'This season', open: '#perf' },
       ])}
+      ${warehouseReceiptsPanel(isLiveMode() ? liveUserId() : 'farmer', { title: 'Warehouse Receipts & Credit', icon: ICON.warehouse })}
       ${split(`
         ${sec('Upcoming Payments')}
         ${itemCard({
@@ -1070,6 +1076,11 @@ const P = {
               body: 'ZVIDA protects your payout details and contract data. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps your account safe.',
             })}
             </div>`,
+        })}
+        ${panel({
+          title: 'Two-factor authentication',
+          icon: ICON.shield,
+          body: mfaPanel(),
         })}
         ${panel({
           title: 'Documents',

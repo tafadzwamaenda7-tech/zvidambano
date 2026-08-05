@@ -1,4 +1,4 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars, takePendingUpload, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, formRules, accountHeader, prefsPanel } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars, takePendingUpload, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, formRules, accountHeader, prefsPanel, mfaPanel } from './core';
 import { loadSettings, saveSettings, saveProfile, changePassword, formValue, radioValue } from '../lib/settings';
 import { resolveDashboardSession } from '../lib/session';
 import type { PillTone } from './core';
@@ -456,6 +456,11 @@ const P = {
               body: 'ZVIDA protects member data and support tools. A strong password (8+ characters, a number, an uppercase letter and a symbol) keeps the desk safe.',
             })}
             </div>`,
+        })}
+        ${panel({
+          title: 'Two-factor authentication',
+          icon: ICON.shield,
+          body: mfaPanel(),
         })}
         ${panel({
           title: 'Documents',

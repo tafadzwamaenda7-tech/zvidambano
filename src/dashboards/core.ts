@@ -10,6 +10,23 @@ import type { DashboardSession } from '../lib/session';
 import { onAuthChange } from '../lib/supabase';
 import { startRealtime } from '../lib/realtime';
 import { signOutAndRedirect } from '../lib/auth-ui';
+import { formValue } from '../lib/settings';
+import { hasPushPermission, ensurePushSubscription, vapidConfigured } from '../lib/pwa';
+import { notifyUser } from '../lib/notifications';
+import { getMfaStatus, enrollTotp, verifyTotpEnrollment, unEnrollMfa, type EnrollResult } from '../lib/auth';
+import {
+  issueWarehouseReceipt,
+  updateWarehouseReceipt,
+  deleteWarehouseReceipt,
+  getWarehouseReceipt,
+  getWarehouseReceipts,
+  demoReceipts,
+  buyingPower,
+  pledgedTonnes,
+  totalTonnes,
+  clearDemoReceipts,
+  type WarehouseReceipt,
+} from '../lib/warehouse';
 
 export interface PageCfg {
   id: string;
@@ -810,16 +827,56 @@ export function weighbridgeByTown(town: string): WeighbridgeStation | undefined 
   return WEIGHBRIDGES.find((w) => w.town.toLowerCase() === (town || '').toLowerCase());
 }
 
+/** The certified weighbridge closest to central Harare (lowest distanceKm). */
+export function nearestWeighbridge(): WeighbridgeStation {
+  return WEIGHBRIDGES.reduce((a, b) => (b.distanceKm < a.distanceKm ? b : a));
+}
+
+/** Weighing methods supported across a load: weighbridge, platform scale, or bucket count. */
+export type WeightMode = 'weighbridge' | 'scale' | 'buckets';
+
+export function weightModeLabel(m: WeightMode, bucketKg?: number): string {
+  if (m === 'weighbridge') return 'Weighbridge';
+  if (m === 'buckets') return 'Buckets · ' + (bucketKg || 20) + ' kg capacity';
+  return 'Platform scale · ' + (bucketKg || 20) + ' kg bucket';
+}
+
 /** A delivery-point select populated with nearby certified weighbridges.
     Option values are the town names (Harare, Ruwa, Marondera, Concession,
     Glendale, Bindura). */
-export function weighbridgeSelect(val: string, o: { ph?: boolean; sel?: string } = {}): string {
-  const ph = o.ph ? `<option value="" disabled hidden ${o.sel ? '' : 'selected'}>Choose your nearest weighbridge…</option>` : '';
+export function weighbridgeSelect(val: string, o: { ph?: boolean; sel?: string; near?: boolean } = {}): string {
+  const auto = o.near && !o.sel ? nearestWeighbridge().town : o.sel;
+  const ph = o.ph ? `<option value="" disabled hidden ${auto ? '' : 'selected'}>Choose your nearest weighbridge…</option>` : '';
   const opts = WEIGHBRIDGES.map((w) => {
-    const sel = w.town === o.sel ? ' selected' : '';
+    const sel = w.town === auto ? ' selected' : '';
     return `<option value="${w.town}"${sel}>${w.station} · ${w.town} — ${w.distanceKm} km</option>`;
   }).join('');
   return `<select class="dsh-select" data-val="${val}">${ph}${opts}</select>`;
+}
+
+/** Three-way weighing-method selector (Weighbridge / Platform scale / Buckets).
+    Choosing Weighbridge reveals the nearest-weighbridge picker (auto-selected);
+    Scale and Buckets show their capture rules instead. */
+export function weighMethodField(val: string, o: { near?: boolean; wbNote?: boolean } = {}): string {
+  const near = nearestWeighbridge();
+  const wbVal = val + 'Wb';
+  return `<div data-wm>
+    <div class="dsh-radio-row">
+      <label class="dsh-radio"><input type="radio" name="${val}" data-wm-mode value="weighbridge" checked /> Weighbridge</label>
+      <label class="dsh-radio"><input type="radio" name="${val}" data-wm-mode value="scale" /> Platform scale</label>
+      <label class="dsh-radio"><input type="radio" name="${val}" data-wm-mode value="buckets" /> Buckets</label>
+    </div>
+    <div class="dsh-wm-panel" data-wm-panel="weighbridge">
+      ${weighbridgeSelect(wbVal, { ph: true, near: o.near ?? true })}
+      ${o.wbNote !== false ? `<span class="dsh-hint" data-wb-note="${wbVal}">Closest: ${near.station}, ${near.town} (${near.distanceKm} km) — auto-selected. Other stations: ${WEIGHBRIDGES.map((w) => w.town).join(' · ')}.</span>` : ''}
+    </div>
+    <div class="dsh-wm-panel" data-wm-panel="scale" style="display:none">
+      <span class="dsh-hint">Direct scale reading of the full load at loading — the driver enters the total kg on the load card. No first weight.</span>
+    </div>
+    <div class="dsh-wm-panel" data-wm-panel="buckets" style="display:none">
+      <span class="dsh-hint">Bucket count × bucket capacity (kg) = net weight. Skips the first weigh — you count buckets at the farm instead.</span>
+    </div>
+  </div>`;
 }
 
 /* ---------- Chat ---------- */
@@ -1491,7 +1548,7 @@ export interface Consignment {
   phone: string;
   truck: string;
   trailer: string;
-  weightMode: 'weighbridge' | 'scale';
+  weightMode: WeightMode;
   bucketKg: number;
   weight1: number;
   weight2: number;
@@ -1539,7 +1596,7 @@ function lgSeed(): { loads: Consignment[]; seq: number } {
   const l = (
     ref: string, contract: string, commodity: string, art: string,
     supplier: string, receiver: string, from: string, dest: string,
-    mode: 'weighbridge' | 'scale', unitPrice: number, payTerm: string,
+    mode: WeightMode, unitPrice: number, payTerm: string,
     driver: string, phone: string, truck: string, trailer: string,
     status: string, w1: number, w2: number, slip: string, due: string, live: number,
     bags = 0, buckets = 0, inputKg = 0, bucketKg = 20
@@ -1566,7 +1623,7 @@ function lgSeed(): { loads: Consignment[]; seq: number } {
         'weighbridge', 200, 'COD', 'John Doe', '+263 77 123 4567', 'ABC-123 · Scania R450', 'XYZ-789 · Grain Tipper 35t',
         'OFFLOADING', 10000, 0, 'WB-8821', 'On delivery', 94),
       l('LD-2215', '#883', 'Soya', 'soya', 'James (Farmer)', 'Miller Corp (Offtaker)', 'Farm 42, Ruwa', 'Miller Corp, Harare',
-        'scale', 450, 'COC', 'John Doe', '+263 77 123 4567', 'ABC-123 · Scania R450', 'XYZ-789 · Grain Tipper 35t',
+        'buckets', 450, 'COC', 'John Doe', '+263 77 123 4567', 'ABC-123 · Scania R450', 'XYZ-789 · Grain Tipper 35t',
         'LOADING', 0, 0, '', 'On collection', 0, 0, 0, 0, 20),
       l('LD-2216', '#886', 'Maize', 'grain', 'Peter (Farmer)', 'ZVIDA', 'Farm 12, Marondera', 'ZVIDA Depot, Chegutu',
         'weighbridge', 180, 'NET_14', 'Sarah Moyo', '+263 78 987 6543', 'DEF-456 · FAW 8x4', 'UVW-000 · Side tipper',
@@ -1840,10 +1897,10 @@ export function loadWeights(l: Consignment): string {
       <div><span class="l">Net quantity</span><span class="v strong">${net ? net.toLocaleString() + ' kg' : '—'}</span></div>
       <div><span class="l">Weighbridge slip</span><span class="v">${l.slip ? pill(l.slip, 'blue') : '—'}</span></div>`
     : `
-      <div><span class="l">Scale · bucket</span><span class="v">${l.bucketKg} kg</span></div>
+      <div><span class="l">${l.weightMode === 'buckets' ? 'Bucket capacity' : 'Scale · bucket'}</span><span class="v">${l.bucketKg} kg</span></div>
       <div><span class="l">Bags / Buckets</span><span class="v">${l.bags || '—'} / ${l.buckets || '—'}</span></div>
       <div><span class="l">Net quantity</span><span class="v strong">${net ? net.toLocaleString() + ' kg' : '—'}</span></div>
-      <div><span class="l">Scale photos</span><span class="v">${l.pics ? pill(l.pics + ' captured', 'blue') : '—'}</span></div>`;
+      <div><span class="l">${l.weightMode === 'buckets' ? 'Load photos' : 'Scale photos'}</span><span class="v">${l.pics ? pill(l.pics + ' captured', 'blue') : '—'}</span></div>`;
   return `<div class="dsh-lg-weights">${cells}</div>`;
 }
 
@@ -1886,6 +1943,22 @@ export function loadScaleForm(l: Consignment): string {
       ${uploadBtn('Photo', 'ghost', 'image/*', { bucket: 'weighbridge-tickets', on: 'lgPhoto', key: 'lg-photo' })}
     </div>
     <div class="dsh-btn-row">${jsBtn('Confirm Final Load', 'primary sm', 'lgCount', l.id, 'Load counted — amount calculated, payment pending')}</div>
+  </div>`;
+}
+
+export function loadBucketForm(l: Consignment): string {
+  return `<div class="dsh-lg-form">
+    <div class="dsh-lg-form-title">Bucket count <span class="dsh-lg-form-note">capacity per bucket × buckets counted — no first weight needed</span></div>
+    <div class="dsh-lg-form-grid">
+      <input class="dsh-input" data-wg-id="${l.id}" data-wg="bucketkg" inputmode="numeric" placeholder="Bucket capacity (kg)" value="${l.bucketKg || ''}" />
+      <input class="dsh-input" data-wg-id="${l.id}" data-wg="buckets" inputmode="numeric" placeholder="Buckets counted" value="${l.buckets || ''}" />
+      <input class="dsh-input" data-wg-id="${l.id}" data-wg="bags" inputmode="numeric" placeholder="Bags (50 kg)" value="${l.bags || ''}" />
+    </div>
+    <div class="dsh-lg-form-row">
+      <span class="dsh-lg-form-note">Take a picture of the full load and the bucket count.</span>
+      ${uploadBtn('Photo', 'ghost', 'image/*', { bucket: 'weighbridge-tickets', on: 'lgPhoto', key: 'lg-photo' })}
+    </div>
+    <div class="dsh-btn-row">${jsBtn('Confirm Bucket Count', 'primary sm', 'lgCount', l.id, 'Load counted — amount calculated, payment pending')}</div>
   </div>`;
 }
 
@@ -1956,7 +2029,7 @@ function loadDetailHtml(l: Consignment, role: LoadRole): string {
   <div class="dsh-lg-meta-row">
     <span>${svg(ICON.users)} Supplier: ${zFromName(l, role)}</span>
     <span>${svg(ICON.buy)} Receiver: ${zToName(l, role)}</span>
-    <span>${svg(ICON.weighbridge)} ${l.weightMode === 'weighbridge' ? 'Weighbridge' : 'Scale · ' + l.bucketKg + ' kg bucket'}</span>
+    <span>${svg(ICON.weighbridge)} ${weightModeLabel(l.weightMode, l.bucketKg)}</span>
   </div>
   ${loadSteps(l)}
   ${loadProgressBar(l)}
@@ -2520,6 +2593,15 @@ export function wireForms(root: HTMLElement): void {
           note.style.display = w ? '' : 'none';
         }
       }
+      if (t.matches('input[data-wm-mode]')) {
+        const wm = t.closest<HTMLElement>('[data-wm]');
+        if (wm) {
+          const m = (t as HTMLInputElement).value;
+          wm.querySelectorAll<HTMLElement>('[data-wm-panel]').forEach((p) => {
+            p.style.display = p.getAttribute('data-wm-panel') === m ? '' : 'none';
+          });
+        }
+      }
     }
     if (t.type === 'password' && t === form.querySelector<HTMLInputElement>('input[type="password"]')) {
       const box = form.querySelector<HTMLElement>('[data-pw-check]');
@@ -2603,7 +2685,7 @@ export function freightFeed(loads: Consignment[], limit = 5, target = '#deliveri
    Issued automatically as a contract moves through milestones.
    ============================================================ */
 type ZdocRole = 'supplier' | 'receiver' | 'driver' | 'admin';
-type ZdocKind = 'PO' | 'DN' | 'INV' | 'PC' | 'POD';
+type ZdocKind = 'PO' | 'DN' | 'INV' | 'FIS' | 'PC' | 'POD';
 
 const ZDOC_STYLES = `
 .z-doc{font-family:Georgia,'Times New Roman',serif;color:#111;line-height:1.5;background:#fff;margin:0 auto;max-width:760px;}
@@ -2648,6 +2730,7 @@ const ZDOC_META: Record<ZdocKind, ZdocMetaOf> = {
   PO: { label: 'Purchase Order', prefix: 'PO', file: 'Purchase_Order' },
   DN: { label: 'Delivery Note', prefix: 'DN', file: 'Delivery_Note' },
   INV: { label: 'Invoice', prefix: 'INV', file: 'Invoice' },
+  FIS: { label: 'ZIMRA e-Invoice', prefix: 'FIS', file: 'ZIMRA_eInvoice' },
   PC: { label: 'Payment Confirmation', prefix: 'PC', file: 'Payment_Confirmation' },
   POD: { label: 'Proof of Delivery', prefix: 'POD', file: 'Proof_of_Delivery' },
 };
@@ -2656,6 +2739,7 @@ const ZDOC_TRIGGER: Record<ZdocKind, string[]> = {
   PO: ['PENDING', 'LOADING', 'WEIGHED_1', 'IN_TRANSIT', 'OFFLOADING', 'WEIGHED_2', 'PENDING_PAYMENT', 'PAID'],
   DN: ['LOADING', 'WEIGHED_1', 'IN_TRANSIT', 'OFFLOADING', 'WEIGHED_2', 'PENDING_PAYMENT', 'PAID'],
   INV: ['PENDING_PAYMENT', 'PAID'],
+  FIS: ['PENDING_PAYMENT', 'PAID'],
   PC: ['PAID'],
   POD: ['OFFLOADING', 'WEIGHED_2', 'PENDING_PAYMENT', 'PAID'],
 };
@@ -2674,6 +2758,36 @@ const ZDOCS: Record<string, ZdocDef> = {};
 
 function znum(l: Consignment, prefix: string): string {
   return prefix + '-2026-' + String(l.contract.replace(/\D/g, '')).padStart(4, '0');
+}
+
+const ZIMRA_VAT_RATE = 0.15;
+
+function zfisSeries(): string {
+  const seed = Date.now().toString(36).toUpperCase();
+  return seed.slice(-7).padStart(7, '0');
+}
+
+function zfisCheck(series: string): string {
+  let sum = 0;
+  for (let i = 0; i < series.length; i++) sum += parseInt(series[i], 10) * (i + 1);
+  return String(97 - (sum % 97)).padStart(2, '0');
+}
+
+function zfisNumber(l: Consignment, party: 'supplier' | 'offtaker'): string {
+  const series = zfisSeries();
+  return series + zfisCheck(series) + (party === 'offtaker' ? 'O' : 'S');
+}
+
+function zfisCode(l: Consignment, party: 'supplier' | 'offtaker'): string {
+  const base = l.contract.replace(/\D/g, '') + l.ref.replace(/\D/g, '') + party;
+  let h = 0;
+  for (let i = 0; i < base.length; i++) h = (h * 31 + base.charCodeAt(i)) >>> 0;
+  return (h >>> 0).toString(16).toUpperCase().padStart(8, '0');
+}
+
+function zvatSplit(total: number): { net: number; vat: number } {
+  const net = Math.round((total / (1 + ZIMRA_VAT_RATE)) * 100) / 100;
+  return { net, vat: Math.round((total - net) * 100) / 100 };
 }
 
 function zqty(l: Consignment): string {
@@ -2827,6 +2941,36 @@ function zdocInv(l: Consignment, party: 'supplier' | 'offtaker'): { body: string
   return { body, foot };
 }
 
+function zdocFis(l: Consignment, party: 'supplier' | 'offtaker'): { body: string; foot: string } {
+  const total = zamountFor(l, party);
+  const { net, vat } = zvatSplit(total);
+  const receiptNo = zfisNumber(l, party);
+  const fiscalCode = zfisCode(l, party);
+  const supplier = party === 'offtaker' ? ZVIDA_COUNTERPARTY : l.supplier;
+  const body = `
+    <div class="z-grid">
+      <div><span class="z-k">ZIMRA e-Invoice no.</span><span class="z-v strong">${receiptNo}</span></div>
+      <div><span class="z-k">Fiscal code</span><span class="z-v">${fiscalCode}</span></div>
+      <div><span class="z-k">VAT registration</span><span class="z-v">VAT 40000091-45</span></div>
+      <div><span class="z-k">VAT rate</span><span class="z-v">${(ZIMRA_VAT_RATE * 100).toFixed(0)}%</span></div>
+      <div><span class="z-k">Issued by</span><span class="z-v">ZVIDA Agro Traders · TPIN 10012345-68</span></div>
+      <div><span class="z-k">Customer TPIN</span><span class="z-v">${supplier}</span></div>
+    </div>
+    <table class="z-table">
+      <thead><tr><th>Description</th><th>Quantity</th><th class="r">Net (USD)</th><th class="r">VAT (USD)</th><th class="r">Total (USD)</th></tr></thead>
+      <tbody><tr><td>${l.commodity} — ${party === 'offtaker' ? 'sale to ' + l.receiver : 'purchase from ' + l.supplier} · contract ${l.contract}</td><td>${zqty(l)}</td><td class="r">${l.qty ? loadMoney(net) : '—'}</td><td class="r">${l.qty ? loadMoney(vat) : '—'}</td><td class="r">${l.qty ? loadMoney(total) : '—'}</td></tr></tbody>
+      <tfoot><tr><td colspan="2" class="r">${l.qty ? 'Net ' + loadMoney(net) + ' · VAT 15% ' + loadMoney(vat) : ''}</td><td colspan="2" class="r">Total incl. VAT</td><td class="r">${l.qty ? loadMoney(total) : 'To be weighed'}</td></tr></tfoot>
+    </table>
+    <div class="z-inwords"><span class="z-k">Amount in words</span><span class="z-v">${zinWords(total)}</span></div>
+    <div class="z-note">Fiscalised electronically under the ZIMRA Tax Invoice / e-Receipt framework. Check digit verified · ${l.payTerm} · due ${l.due} · generated at the payment milestone.</div>`;
+  const foot = `
+    <div class="z-signs">
+      ${zdocSign('ZVIDA Brokerage', 'Auto-issued · fiscalised to ZIMRA')}
+      ${zdocSign('Supplier', 'Tax invoice received')}
+    </div>`;
+  return { body, foot };
+}
+
 function zdocPc(l: Consignment, role: ZdocRole): { body: string; foot: string } {
   const party: 'supplier' | 'offtaker' = role === 'receiver' ? 'offtaker' : 'supplier';
   const amount = zamountFor(l, party);
@@ -2900,12 +3044,18 @@ function zdocRegister(l: Consignment, role: ZdocRole = 'admin'): void {
     put(l.id + '-inv-o', 'INV', znum(l, 'INV') + '-O', invO.body, invO.foot, `Contract ${l.contract} · offtaker rate ${loadMoney(zpriceFor(l, 'offtaker'))}/t`);
     const legacyInv = ZDOCS[l.id + '-inv-o'];
     if (legacyInv) registerDownload(l.id + '-invoice', `Invoice_${l.ref}.html`, legacyInv.sheet, 'text/html');
+    const fisS = zdocFis(l, 'supplier');
+    put(l.id + '-fis-s', 'FIS', zfisNumber(l, 'supplier'), fisS.body, fisS.foot, `Contract ${l.contract} · VAT ${loadMoney(zvatSplit(zamountFor(l, 'supplier')).vat)} @ 15%`);
+    const fisO = zdocFis(l, 'offtaker');
+    put(l.id + '-fis-o', 'FIS', zfisNumber(l, 'offtaker'), fisO.body, fisO.foot, `Contract ${l.contract} · VAT ${loadMoney(zvatSplit(zamountFor(l, 'offtaker')).vat)} @ 15%`);
     const pc = zdocPc(l, role);
     put(l.id + '-pc', 'PC', znum(l, 'PC'), pc.body, pc.foot, `Contract ${l.contract} · ${loadMoney(zamountFor(l, 'supplier'))} received`);
   } else if (role !== 'driver') {
     const side: 'supplier' | 'offtaker' = role === 'receiver' ? 'offtaker' : 'supplier';
     const inv = zdocInv(l, side);
     put(l.id + '-inv-' + (role === 'receiver' ? 'o' : 's'), 'INV', znum(l, 'INV') + (role === 'receiver' ? '-O' : '-S'), inv.body, inv.foot, `Contract ${l.contract} · rate ${loadMoney(zpriceFor(l, side))}/t`);
+    const fis = zdocFis(l, side);
+    put(l.id + '-fis-' + (role === 'receiver' ? 'o' : 's'), 'FIS', zfisNumber(l, side), fis.body, fis.foot, `Contract ${l.contract} · VAT ${loadMoney(zvatSplit(zamountFor(l, side)).vat)} @ 15%`);
     const pc = zdocPc(l, role);
     put(l.id + '-pc', 'PC', znum(l, 'PC'), pc.body, pc.foot, `Contract ${l.contract} · ${loadMoney(zamountFor(l, side))} settled`);
   }
@@ -2921,13 +3071,17 @@ function zdocAvail(l: Consignment, role: ZdocRole): ZdocKind[] {
   if (role !== 'driver' && ZDOC_TRIGGER.PO.includes(l.status)) out.push('PO');
   if (ZDOC_TRIGGER.DN.includes(l.status)) out.push('DN');
   if (role !== 'driver' && ZDOC_TRIGGER.INV.includes(l.status)) out.push('INV');
+  if (role !== 'driver' && ZDOC_TRIGGER.FIS.includes(l.status)) out.push('FIS');
   if (role !== 'driver' && ZDOC_TRIGGER.PC.includes(l.status)) out.push('PC');
   if (role === 'driver' && ZDOC_TRIGGER.POD.includes(l.status)) out.push('POD');
   return out;
 }
 
 function zdocDocKey(l: Consignment, kind: ZdocKind, role: ZdocRole): string {
-  if (kind === 'INV') return role === 'supplier' ? l.id + '-inv-s' : l.id + '-inv-o';
+  if (kind === 'INV' || kind === 'FIS') {
+    const suffix = role === 'receiver' ? 'o' : 's';
+    return l.id + '-' + (kind === 'FIS' ? 'fis' : 'inv') + '-' + suffix;
+  }
   return l.id + '-' + kind.toLowerCase();
 }
 
@@ -2946,6 +3100,9 @@ function zdocPills(l: Consignment, role: ZdocRole): string {
     if (k === 'INV' && role === 'admin') {
       btns.push(zdocBtn('Invoice · Supplier Rate', l.id + '-inv-s'));
       btns.push(zdocBtn('Invoice · Offtaker Rate', l.id + '-inv-o'));
+    } else if (k === 'FIS' && role === 'admin') {
+      btns.push(zdocBtn('ZIMRA e-Invoice · Supplier', l.id + '-fis-s'));
+      btns.push(zdocBtn('ZIMRA e-Invoice · Offtaker', l.id + '-fis-o'));
     } else {
       btns.push(zdocBtn(k === 'INV' ? 'Invoice' : ZDOC_META[k].label, zdocDocKey(l, k, role)));
     }
@@ -2961,6 +3118,9 @@ function zdocRows(loads: Consignment[], role: ZdocRole): { l: Consignment; keys:
       if (k === 'INV' && role === 'admin') {
         keys.push({ label: 'Invoice · Supplier Rate', key: l.id + '-inv-s' });
         keys.push({ label: 'Invoice · Offtaker Rate', key: l.id + '-inv-o' });
+      } else if (k === 'FIS' && role === 'admin') {
+        keys.push({ label: 'ZIMRA e-Invoice · Supplier', key: l.id + '-fis-s' });
+        keys.push({ label: 'ZIMRA e-Invoice · Offtaker', key: l.id + '-fis-o' });
       } else {
         keys.push({ label: k === 'INV' ? 'Invoice' : ZDOC_META[k].label, key: zdocDocKey(l, k, role) });
       }
@@ -3019,8 +3179,8 @@ export function zdocDocuments(role: ZdocRole, who = ''): string {
   const lead = role === 'driver'
     ? `Trip documents are issued as each load moves: the delivery note at loading and the proof of delivery when the load is signed off.`
     : role === 'admin'
-      ? `Every contract document lives here — the purchase order, delivery note, both invoice copies (supplier and offtaker rates) and the payment confirmation. Q3 tax reporting can be exported per contract.`
-      : `Physical documents are issued automatically as each contract moves: the purchase order on acceptance, the delivery note at loading, the invoice at the payment milestone and the payment confirmation when settled.`;
+      ? `Every contract document lives here — the purchase order, delivery note, both invoice copies (supplier and offtaker rates), the ZIMRA fiscalised e-invoice at the payment milestone and the payment confirmation. The 15% VAT register can be exported as CSV for your quarterly ZIMRA return.`
+      : `Documents are issued automatically as each contract moves: the purchase order on acceptance, the delivery note at loading, the invoice and ZIMRA e-invoice at the payment milestone, and the payment confirmation when settled.`;
   const kpisBlock = role === 'driver'
     ? kpis([
         { label: 'Trips', value: loads.length, icon: ICON.trips, delta: total + ' documents available', up: true, spark: [1, 2, 2, 3, 3, 4, Math.max(loads.length, 1)], foot: 'Your consignments', open: '#trips' },
@@ -3043,6 +3203,7 @@ export function zdocDocuments(role: ZdocRole, who = ''): string {
       })}
     `).join('') : banner('ok', 'No documents available yet — documents appear as your contracts move through their milestones.')}
     ${rows.length ? `${jsBtn('Download All', 'primary sm', 'zdocAll', role + '|' + who, 'Downloading all documents')}` : ''}
+    ${role !== 'driver' && rows.length ? `${jsBtn('Tax Export (CSV)', 'ghost sm', 'zdocTax', role + '|' + who, 'Downloading VAT register')}` : ''}
   `;
 }
 
@@ -3080,6 +3241,41 @@ export function wireZdoc(): void {
     keys.forEach((key, i) => window.setTimeout(() => downloadNow(key), i * 160));
     toast(`Downloading ${keys.length} documents`);
   };
+  JS.zdocTax = (payload) => {
+    const [role, who] = payload.split('|');
+    const loads = zdocLoads(role as ZdocRole, who).filter((l) => ZDOC_TRIGGER.FIS.includes(l.status));
+    if (!loads.length) {
+      toast('No fiscalised e-invoices yet — they are issued at the payment milestone', 'warn');
+      return;
+    }
+    const esc = (s: string | number): string => {
+      const t = String(s ?? '');
+      return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+    };
+    const sides: ('supplier' | 'offtaker')[] = role === 'admin' ? ['supplier', 'offtaker'] : [role === 'receiver' ? 'offtaker' : 'supplier'];
+    const lines: string[][] = [['Receipt No', 'Fiscal code', 'Date', 'Contract', 'Load Ref', 'Type', 'Commodity', 'Qty (t)', 'Net (USD)', 'VAT 15% (USD)', 'Total incl. VAT (USD)']];
+    const month = new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }).replace(' ', '');
+    for (const l of loads) {
+      for (const side of sides) {
+        const total = zamountFor(l, side);
+        const { net, vat } = zvatSplit(total);
+        lines.push([zfisNumber(l, side), zfisCode(l, side), new Date().toLocaleDateString('en-US'), l.contract, l.ref, side, l.commodity, (l.qty / 1000).toFixed(2), net.toFixed(2), vat.toFixed(2), total.toFixed(2)]);
+      }
+    }
+    const csv = lines.map((r) => r.map(esc).join(',')).join('\n');
+    const key = 'z-tax-' + Date.now();
+    registerDownload(key, `ZIMRA_VAT_Register_${month}.csv`, csv, 'text/csv');
+    downloadNow(key);
+    toast(`Exported ${loads.length} fiscalised e-invoice(s)`);
+  };
+}
+
+function geoTrackBtns(l: Consignment, role: 'supplier' | 'driver'): string {
+  const geo = geoTracking()
+    ? `${pill('GPS live', 'green')}${jsBtn('Stop GPS', 'ghost sm', 'geoOff')}`
+    : `${jsBtn('Track GPS', 'primary sm', 'geoOn')}`;
+  const manual = role === 'driver' ? jsBtn('Report Arrival', 'ghost sm', 'lgAction', l.id + ':arrive', 'Arrived — offloading') : '';
+  return `${geo}${jsBtn(`Radius ${geoRadiusKm()} km`, 'ghost sm', 'geoRadius')}${manual}`;
 }
 
 function lgFoot(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admin'): string {
@@ -3095,8 +3291,9 @@ function lgFoot(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admi
     if (s === 'PENDING') return `${jsBtn('Start Loading', 'primary sm', 'lgAction', l.id + ':start', 'Loading started — driver notified')}${zdocPills(l, 'supplier')}`;
     if (s === 'LOADING' && l.weightMode === 'weighbridge') return loadWeighForm(l, 'w1');
     if (s === 'LOADING' && l.weightMode === 'scale') return loadScaleForm(l);
+    if (s === 'LOADING' && l.weightMode === 'buckets') return loadBucketForm(l);
     if (s === 'WEIGHED_1') return `${jsBtn('Hand Over to Driver', 'primary sm', 'lgAction', l.id + ':depart', 'Truck departed — GPS tracking on')}${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
-    if (s === 'IN_TRANSIT') return `${jsBtn('Track Live', 'primary sm', 'lgAction', l.id + ':arrive', 'Opening live tracking',)}${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
+    if (s === 'IN_TRANSIT') return `${jsBtn('Track Live', 'primary sm', 'lgAction', l.id + ':arrive', 'Opening live tracking',)}${geoTrackBtns(l, 'supplier')}${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
     if (s === 'OFFLOADING') return `${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
     if (s === 'PENDING_PAYMENT') return `${jsBtn('Track Payment', 'ghost sm', 'lgAction', l.id + ':note', 'Payment due ' + l.due)}${call('Driver ' + l.driver)}${zdocPills(l, 'supplier')}`;
     if (s === 'PAID') return `${pill('Payment received · Receipt sent', 'green')}${zdocPills(l, 'supplier')}`;
@@ -3107,8 +3304,9 @@ function lgFoot(l: Consignment, role: 'supplier' | 'driver' | 'receiver' | 'admi
     if (s === 'PENDING') return jsBtn('Start Loading', 'primary sm', 'lgAction', l.id + ':start', 'Loading started — GPS tracking on');
     if (s === 'LOADING' && l.weightMode === 'weighbridge') return loadWeighForm(l, 'w1');
     if (s === 'LOADING' && l.weightMode === 'scale') return loadScaleForm(l);
+    if (s === 'LOADING' && l.weightMode === 'buckets') return loadBucketForm(l);
     if (s === 'WEIGHED_1') return `${jsBtn('Start Trip', 'primary sm', 'lgAction', l.id + ':depart', 'Departed — ETA calculated')}${zdocPills(l, 'driver')}`;
-    if (s === 'IN_TRANSIT') return `${jsBtn('Report Arrival', 'primary sm', 'lgAction', l.id + ':arrive', 'Arrived — offloading')}${jsBtn('Call Dispatch', 'ghost sm', 'lgCall', 'Dispatch|+263 24 277 8800', 'Dialing ZVIDA dispatch…')}`;
+    if (s === 'IN_TRANSIT') return `${geoTrackBtns(l, 'driver')}${call('Dispatch')}`;
     if (s === 'OFFLOADING' && l.weightMode === 'weighbridge') return loadWeighForm(l, 'w2');
     if (s === 'OFFLOADING') return `${jsBtn('Offload Complete', 'primary sm', 'lgAction', l.id + ':deliver', 'Offload confirmed — delivery complete')}${zdocPills(l, 'driver')}`;
     if (s === 'PENDING_PAYMENT') return `${pill('Trip complete · payment pending', 'amber')}${zdocPills(l, 'driver')}`;
@@ -3138,7 +3336,7 @@ export function loadCard(l: Consignment, role: LoadRole = 'supplier'): string {
     <div class="dsh-lg-meta-row">
       <span>${svg(ICON.users)} Supplier: ${zFromName(l, role)}</span>
       <span>${svg(ICON.buy)} Receiver: ${zToName(l, role)}</span>
-      <span>${svg(ICON.weighbridge)} ${l.weightMode === 'weighbridge' ? 'Weighbridge' : 'Scale · ' + l.bucketKg + ' kg bucket'}</span>
+      <span>${svg(ICON.weighbridge)} ${weightModeLabel(l.weightMode, l.bucketKg)}</span>
     </div>`;
   return `<div class="dsh-lg-card" data-live-card="${l.id}" data-lg-role="${role}">
     <div class="dsh-lg-card-head">
@@ -3169,6 +3367,113 @@ export function freightKpis(loads: Consignment[]): { inTransit: number; loading:
     pendingPay: pending.length, pendingValue: pending.reduce((s, l) => s + l.amount, 0),
     paid: paid.length, paidValue: paid.reduce((s, l) => s + l.amount, 0),
   };
+}
+
+/* ---------- Geofenced arrival detection ---------- */
+interface GeoPoint {
+  lat: number;
+  lng: number;
+  town: string;
+}
+
+const GEO_POINTS: Record<string, GeoPoint> = {
+  Harare: { lat: -17.8252, lng: 31.0335, town: 'Harare' },
+  Ruwa: { lat: -17.893, lng: 31.243, town: 'Ruwa' },
+  Marondera: { lat: -18.188, lng: 31.544, town: 'Marondera' },
+  Chinhoyi: { lat: -17.369, lng: 30.201, town: 'Chinhoyi' },
+  Masvingo: { lat: -20.079, lng: 30.827, town: 'Masvingo' },
+  Mutare: { lat: -18.973, lng: 32.669, town: 'Mutare' },
+  Bulawayo: { lat: -20.15, lng: 28.583, town: 'Bulawayo' },
+  Bindura: { lat: -17.296, lng: 31.33, town: 'Bindura' },
+  Gweru: { lat: -19.45, lng: 29.82, town: 'Gweru' },
+  Concession: { lat: -17.3667, lng: 30.9833, town: 'Concession' },
+  Glendale: { lat: -17.3667, lng: 31.0667, town: 'Glendale' },
+};
+
+function haversineKm(a: { lat: number; lng: number }, b: { lat: number; lng: number }): number {
+  const R = 6371;
+  const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+  const dLng = ((b.lng - a.lng) * Math.PI) / 180;
+  const la1 = (a.lat * Math.PI) / 180;
+  const la2 = (b.lat * Math.PI) / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+function geoDest(l: Consignment): GeoPoint | null {
+  if (!l.dest) return null;
+  const key = l.dest.split('·')[0].split(',')[0].trim();
+  return GEO_POINTS[key] || GEO_POINTS[l.dest.trim()] || null;
+}
+
+const GEO_RADIUS_KEY = 'zvida_geo_radius_km';
+const GEO_RADII = [1, 3, 5, 10, 20];
+
+export function geoRadiusKm(): number {
+  try {
+    const v = parseFloat(localStorage.getItem(GEO_RADIUS_KEY) || '3');
+    return v > 0 && v <= 50 ? v : 3;
+  } catch {
+    return 3;
+  }
+}
+
+export function setGeoRadiusKm(km: number): void {
+  try {
+    localStorage.setItem(GEO_RADIUS_KEY, String(Math.max(0.5, Math.min(50, km))));
+  } catch {
+    /* ignore */
+  }
+}
+
+let geoPos: { lat: number; lng: number; at: number } | null = null;
+let geoWatchId: number | null = null;
+const geoArrived = new Set<string>();
+
+export function geoTracking(): boolean {
+  return geoWatchId !== null;
+}
+
+export function startGeoWatch(): void {
+  if (geoWatchId !== null || !('geolocation' in navigator)) return;
+  geoWatchId = navigator.geolocation.watchPosition(
+    (pos) => {
+      geoPos = { lat: pos.coords.latitude, lng: pos.coords.longitude, at: Date.now() };
+    },
+    () => {
+      /* permission denied / position unavailable — leave geoPos null */
+    },
+    { enableHighAccuracy: true, maximumAge: 15000, timeout: 20000 }
+  );
+}
+
+export function stopGeoWatch(): void {
+  if (geoWatchId !== null) {
+    navigator.geolocation.clearWatch(geoWatchId);
+    geoWatchId = null;
+  }
+  geoPos = null;
+}
+
+function geofenceTick(): void {
+  const p = geoPos;
+  if (!p) return;
+  const radius = geoRadiusKm();
+  const els = document.querySelectorAll<HTMLElement>('[data-live-card]');
+  els.forEach((card) => {
+    const id = card.getAttribute('data-live-card') || '';
+    const l = load(id);
+    if (!l || l.status !== 'IN_TRANSIT' || geoArrived.has(id)) return;
+    const d = geoDest(l);
+    if (!d) return;
+    const km = haversineKm(p, d);
+    if (km > radius) return;
+    geoArrived.add(id);
+    lgTransition(l, 'arrive', `GPS detected arrival at ${d.town} · ${km.toFixed(1)} km from destination`);
+    toast(`Truck arrived at ${d.town} — offloading started`, 'success');
+    const uid = liveUserId();
+    if (uid) void notifyUser(uid, `Arrived — ${l.ref}`, `${l.commodity} load reached ${d.town}; offloading in progress`, 'info', { url: '#deliveries' });
+  });
 }
 
 /* Shared freight JS handlers + live telemetry simulation */
@@ -3206,7 +3511,12 @@ export function wireFreight(): void {
     l.bags = get('bags');
     l.buckets = get('buckets');
     l.inputKg = get('kgs');
-    if (!l.inputKg && !l.bags && !l.buckets) {
+    if (l.weightMode === 'buckets') {
+      if (!l.bucketKg || !l.buckets) {
+        toast('Enter bucket capacity (kg) and buckets counted', 'warn');
+        return;
+      }
+    } else if (!l.inputKg && !l.bags && !l.buckets) {
       toast('Enter buckets, bags or total kgs', 'warn');
       return;
     }
@@ -3214,7 +3524,7 @@ export function wireFreight(): void {
     l.amount = Math.round((l.qty / 1000) * l.unitPrice);
     l.pics += 1;
     lgTransition(l, 'count', 'Counted by ' + currentUser);
-    toast(`${l.qty.toLocaleString()} kg · ${loadMoney(l.amount)} — payment pending`, 'success');
+    toast(`${l.qty.toLocaleString()} kg (${l.buckets} buckets × ${l.bucketKg} kg) · ${loadMoney(l.amount)} — payment pending`, 'success');
     refresh();
   };
   JS.lgSettle = (payload) => {
@@ -3244,9 +3554,26 @@ export function wireFreight(): void {
     lgSave();
     void persistLoad(l as unknown as LiveLoad);
   };
+  JS.geoOn = () => {
+    startGeoWatch();
+    toast(geoTracking() ? `GPS tracking on — arrival auto-detects within ${geoRadiusKm()} km of destination` : 'GPS tracking requested', 'success');
+    refresh();
+  };
+  JS.geoOff = () => {
+    stopGeoWatch();
+    toast('GPS tracking off', 'info');
+    refresh();
+  };
+  JS.geoRadius = () => {
+    const next = GEO_RADII[(GEO_RADII.indexOf(geoRadiusKm()) + 1) % GEO_RADII.length];
+    setGeoRadiusKm(next);
+    toast(`Arrival radius set to ${next} km`, 'info');
+    refresh();
+  };
 
   if (freightLiveTimer === null) {
     freightLiveTimer = window.setInterval(() => {
+      geofenceTick();
       const els = document.querySelectorAll<HTMLElement>('[data-live-card]');
       if (!els.length) return;
       els.forEach((card) => {
@@ -3292,6 +3619,7 @@ export async function hydrateLive(): Promise<void> {
     if (liveConfigured()) {
       localStorage.removeItem(MK_KEY);
       localStorage.removeItem(LG_KEY);
+      clearDemoReceipts();
     }
     const m = mkLoad()!;
     const f = lgLoad()!;
@@ -3946,13 +4274,352 @@ function notificationsPageHtml(cfg: RoleCfg): string {
       });
   return `${sec('Notifications')}
     ${panel({ body, flush: true })}
+    ${pushOptInBanner()}
     ${banner('info', 'Live updates also arrive in the bell in the top bar.', undefined, undefined, undefined)}`;
+}
+
+/* ---------- Web push opt-in ---------- */
+function pushOptInBanner(): string {
+  if (!isLiveMode()) {
+    return banner('info', 'Sign in with your ZVIDA account to receive browser push notifications.', undefined, undefined, undefined);
+  }
+  if (hasPushPermission()) {
+    return banner('ok', 'Browser push notifications are <b>enabled</b>. Updates arrive even when ZVIDA is closed.', undefined, undefined, undefined);
+  }
+  if (!vapidConfigured()) {
+    return banner('warn', 'Push notifications are not configured yet. Add your VAPID key (VITE_VAPID_PUBLIC_KEY) to enable them.', undefined, undefined, undefined);
+  }
+  return `${banner('info', 'Turn on browser push notifications so contract and payout updates reach you instantly.', undefined, undefined, undefined)}
+    <div style="margin-top:8px">${jsBtn('Enable push notifications', 'primary', 'enablePush')}</div>`;
+}
+
+function registerPush(): void {
+  JS.enablePush = () => {
+    void (async () => {
+      const ok = await ensurePushSubscription();
+      if (ok) toast('Push notifications enabled', 'success');
+      else toast('Could not enable push — allow the permission prompt and confirm your VAPID key is set.', 'error');
+    })();
+  };
+}
+
+/* ---------- Two-factor authentication (dashboard enrollment) ---------- */
+let mfaPendingFactor: string | null = null;
+
+export function mfaPanel(): string {
+  return `<div data-async="mfa-status"></div>`;
+}
+
+function mfaSetupBody(r: EnrollResult): string {
+  const code = `style="display:block;padding:9px 11px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:9px;font:600 12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#0f172a;word-break:break-all;margin-top:5px"`;
+  return `${banner('info', 'Open your authenticator app, add this ZVIDAMBANO account, then enter the 6-digit code it shows to activate two-factor authentication.')}
+    <div class="dsh-field"><label class="dsh-label">Manual entry secret</label><code ${code}>${r.secret || ''}</code></div>
+    <div class="dsh-field"><label class="dsh-label">otpauth URI (scan with your app)</label><code ${code}>${(r.uri || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;')}</code></div>
+    ${field('Verification code', input(undefined, '6-digit code', { val: 'mfaCode' }))}
+    <div class="dsh-btn-row">${jsBtn('Verify & activate', 'primary', 'mfaVerify')}${jsBtn('Cancel', 'ghost sm', 'mfaCancel')}</div>`;
+}
+
+asyncFills['mfa-status'] = async () => {
+  if (!isLiveMode()) {
+    return `${banner('info', 'Two-factor authentication protects real accounts. Demo profiles do not use it.')}`;
+  }
+  const s = await getMfaStatus();
+  if (!s.factors.length) {
+    return `${banner('info', 'Protect your account with two-factor authentication (2FA). After enabling, sign-in asks for a 6-digit code from your authenticator app in addition to your password.')}
+      <div class="dsh-btn-row">${jsBtn('Set up authenticator', 'primary', 'mfaEnroll')}</div>`;
+  }
+  const f = s.factors[0];
+  return `${banner('ok', 'Two-factor authentication is on — a 6-digit code is required at sign-in.')}
+    ${listRow(ICON.shield, f.friendlyName || 'Authenticator app', `TOTP · session security ${(s.aal || 'aal1').toUpperCase()}`, jsBtn('Remove', 'ghost sm', 'mfaDisable', f.id), 'plain')}`;
+};
+
+export function registerMfa(): void {
+  JS.mfaEnroll = () => {
+    void (async () => {
+      const el = document.querySelector<HTMLElement>('[data-async="mfa-status"]');
+      if (!el) return;
+      el.innerHTML = '<div class="dsh-mfa-pending" style="padding:10px 0;color:var(--dsh-text-3);font-size:13px">Starting secure setup…</div>';
+      const r = await enrollTotp('Authenticator app');
+      if (!r.ok || !r.factorId) {
+        el.innerHTML = `${banner('danger', r.error || 'Could not start two-factor setup.')}<div class="dsh-btn-row">${jsBtn('Try again', 'ghost sm', 'mfaEnroll')}</div>`;
+        return;
+      }
+      mfaPendingFactor = r.factorId;
+      el.innerHTML = mfaSetupBody(r);
+    })();
+  };
+  JS.mfaVerify = () => {
+    const el = document.querySelector<HTMLElement>('[data-async="mfa-status"]');
+    const code = el?.querySelector<HTMLInputElement>('[data-val="mfaCode"]')?.value.trim() || '';
+    if (!/^\d{6}$/.test(code)) {
+      toast('Enter the 6-digit code from your authenticator app', 'warn');
+      return;
+    }
+    if (!mfaPendingFactor) {
+      toast('No pending setup — start again', 'warn');
+      refresh();
+      return;
+    }
+    void verifyTotpEnrollment(mfaPendingFactor, code).then((ok) => {
+      if (ok) {
+        mfaPendingFactor = null;
+        toast('Two-factor authentication enabled', 'success');
+        refresh();
+      } else {
+        toast('That code was not accepted — check your authenticator app', 'error');
+      }
+    });
+  };
+  JS.mfaCancel = () => {
+    mfaPendingFactor = null;
+    refresh();
+  };
+  JS.mfaDisable = (id) => {
+    void unEnrollMfa(id).then((r) => {
+      toast(r.ok ? 'Two-factor authentication removed' : r.error || 'Could not remove two-factor authentication', r.ok ? 'success' : 'error');
+      refresh();
+    });
+  };
+}
+
+/* ---------- Warehouse receipts (buying power & input credit) ---------- */
+const WR_COMMODITIES = ['Maize', 'Soya', 'Wheat', 'Sorghum', 'Sugar Beans', 'Millet'];
+const WR_GRADES = ['Grade A', 'Grade B', 'Grade C'];
+const WR_STORAGE = [
+  'GMB Grain Silo — Harare',
+  'ZVIDA Hub — Ruwa',
+  'ZVIDA Hub — Marondera',
+  'GMB Depot — Chinhoyi',
+  'ZVIDA Hub — Masvingo',
+  'GMB Grain Silo — Mutare',
+];
+
+function wrDate(d: string): string {
+  if (!d) return '—';
+  const t = new Date(d);
+  return isNaN(t.getTime()) ? d : t.toLocaleDateString([], { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+function wrTone(status: string): PillTone {
+  if (status === 'PLEDGED') return 'amber';
+  if (status === 'RELEASED' || status === 'REDEEMED') return 'green';
+  if (status === 'EXPIRED') return 'red';
+  return 'blue';
+}
+
+function wrTonnes(kg: number): string {
+  const t = kg / 1000;
+  return `${t.toLocaleString([], { maximumFractionDigits: 1 })} t`;
+}
+
+function wrStat(label: string, value: string): string {
+  return `<div style="flex:1;min-width:104px;background:var(--dsh-surface-3);border:1px solid var(--dsh-border);border-radius:14px;padding:10px 12px">
+    <div style="font-size:11px;color:var(--dsh-text-3)">${label}</div>
+    <div style="font-size:15px;font-weight:700;margin-top:2px;color:var(--dsh-text)">${value}</div>
+  </div>`;
+}
+
+function wrRow(r: WarehouseReceipt): string {
+  const id = r.id;
+  const actions =
+    r.status === 'ISSUED'
+      ? `${jsBtn('Pledge', 'primary sm', 'wrPledge', id, 'Receipt pledged — buying power increased')} ${jsBtn('Receipt', 'ghost sm', 'wrPdf', id)} ${jsBtn('Delete', 'ghost sm', 'wrDelete', id, 'Receipt deleted')}`
+      : r.status === 'PLEDGED'
+        ? `${jsBtn('Release', 'ghost sm', 'wrRelease', id, 'Receipt released — collateral returned')} ${jsBtn('Receipt', 'ghost sm', 'wrPdf', id)}`
+        : `${jsBtn('Receipt', 'ghost sm', 'wrPdf', id)}`;
+  return `<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--dsh-border)">
+    <span class="dsh-doc-ico" style="flex:none">${svg(ICON.warehouse)}</span>
+    <div style="flex:1;min-width:0">
+      <div style="font-size:13.5px;font-weight:600;color:var(--dsh-text)">${r.receipt_number} · ${r.commodity}</div>
+      <div style="font-size:12px;color:var(--dsh-text-3);margin-top:2px">${wrTonnes(r.quantity_kg)} · ${r.storage_location || '—'} · Issued ${wrDate(r.issue_date)}</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+      ${r.collateralized_amount ? `<span style="font-size:12px;color:var(--dsh-text-2)">${marketMoney(r.collateralized_amount)}</span>` : ''}
+      ${pill(r.status, wrTone(r.status))}
+      ${actions}
+    </div>
+  </div>`;
+}
+
+export function warehouseReceiptsBody(holderId: string, receipts: WarehouseReceipt[]): string {
+  const power = marketMoney(buyingPower(receipts));
+  const pledged = wrTonnes(pledgedTonnes(receipts) * 1000);
+  const stored = wrTonnes(totalTonnes(receipts) * 1000);
+  const rows = receipts.length ? receipts.map(wrRow).join('') : '';
+  return `<div data-wr-panel="${holderId}">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:8px">
+      ${wrStat('Buying power', power)}
+      ${wrStat('Pledged collateral', pledged)}
+      ${wrStat('Grain stored', stored)}
+    </div>
+    ${rows || emptyState({ icon: ICON.warehouse, title: 'No warehouse receipts yet', sub: 'Register grain you hold in certified storage to start building buying power.', art: 'seed' })}
+    <div class="dsh-disclose">
+      <button type="button" class="dsh-disclose-head" data-disclose aria-expanded="false">
+        ${svg(ICON.plus)}
+        <span class="dsh-disclose-title">Register stored grain</span>
+        <span class="dsh-disclose-sum">Issue a warehouse receipt</span>
+      </button>
+      <div class="dsh-disclose-body">
+        <div data-form data-wr-holder="${holderId}">
+          <div class="dsh-field-grid">
+            ${field('Commodity', select(WR_COMMODITIES, -1, { val: 'wrCommodity', ph: true }))}
+            ${field('Quantity (kg)', input(undefined, 'e.g. 12000', { val: 'wrQty', type: 'number', min: '1', step: '50' }))}
+          </div>
+          <div class="dsh-field-grid">
+            ${field('Grade', select(WR_GRADES, -1, { val: 'wrGrade', ph: true }))}
+            ${field('Storage', select(WR_STORAGE, -1, { val: 'wrStorage', ph: true }))}
+          </div>
+          <div class="dsh-btn-row" style="margin-top:12px">${submitBtn('Issue receipt', 'primary', 'wr-issue')}</div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function warehouseReceiptsFill(holderId: string): Promise<string> {
+  if (!isLiveMode() || !holderId) return warehouseReceiptsBody(holderId, []);
+  try {
+    const receipts = await getWarehouseReceipts(holderId);
+    return warehouseReceiptsBody(holderId, receipts);
+  } catch {
+    return errorState({ title: 'Could not load receipts', message: 'Check your connection and try again.', retry: true });
+  }
+}
+
+export function warehouseReceiptsPanel(holderId: string, opts: { title?: string; icon?: string } = {}): string {
+  const title = opts.title || 'Buying Power';
+  const icon = opts.icon || ICON.wallet;
+  const body = isLiveMode() && holderId
+    ? `<div data-async="warehouse-receipts"></div>`
+    : warehouseReceiptsBody(holderId, demoReceipts(holderId));
+  return panel({ title, icon, body });
+}
+
+function wrRefresh(holderId: string): void {
+  if (isLiveMode() && holderId) {
+    const el = document.querySelector<HTMLElement>('[data-async="warehouse-receipts"]');
+    if (el) {
+      void warehouseReceiptsFill(holderId).then((h) => {
+        if (document.body.contains(el)) el.innerHTML = h;
+      });
+    }
+    return;
+  }
+  const host = document.querySelector<HTMLElement>(`[data-wr-panel="${holderId}"]`);
+  if (host) host.outerHTML = warehouseReceiptsBody(holderId, demoReceipts(holderId));
+}
+
+async function wrSetStatus(id: string, status: WarehouseReceipt['status']): Promise<void> {
+  const rec = await getWarehouseReceipt(id);
+  if (!rec) {
+    toast('Receipt not found', 'error');
+    return;
+  }
+  const collateral = status === 'PLEDGED' ? Math.round((rec.quantity_kg / 1000) * 400) : null;
+  try {
+    await updateWarehouseReceipt(id, { status, collateralized_amount: collateral });
+    toast(status === 'PLEDGED' ? 'Receipt pledged as collateral' : 'Receipt released', 'success');
+    wrRefresh(rec.holder_id);
+  } catch (err) {
+    toast(err instanceof Error ? err.message : 'Could not update receipt', 'error');
+  }
+}
+
+async function wrDelete(id: string): Promise<void> {
+  const rec = await getWarehouseReceipt(id);
+  if (!rec) {
+    toast('Receipt not found', 'error');
+    return;
+  }
+  try {
+    await deleteWarehouseReceipt(id);
+    toast('Receipt deleted', 'success');
+    wrRefresh(rec.holder_id);
+  } catch (err) {
+    toast(err instanceof Error ? err.message : 'Could not delete receipt', 'error');
+  }
+}
+
+async function wrPdf(id: string): Promise<void> {
+  const rec = await getWarehouseReceipt(id);
+  if (!rec) {
+    toast('Receipt not found', 'error');
+    return;
+  }
+  const key = `wr-${id}`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${rec.receipt_number}</title>
+<style>body{font-family:system-ui,sans-serif;color:#111;padding:32px;max-width:640px;margin:0 auto}
+h1{font-size:18px;margin:0 0 4px}.muted{color:#666;font-size:12px}
+table{width:100%;border-collapse:collapse;margin:20px 0}td,th{border:1px solid #ddd;padding:8px 10px;font-size:13px;text-align:left}
+th{background:#f5f5f5;width:38%}.stamp{margin-top:24px;border-top:2px solid #111;padding-top:10px;font-size:12px;color:#333}</style></head>
+<body>
+<h1>ZVIDA Warehouse Receipt</h1>
+<div class="muted">Evidenced storage of grain · Issued by ${rec.issued_by || 'ZVIDA'}</div>
+<table>
+<tr><th>Receipt number</th><td>${rec.receipt_number}</td></tr>
+<tr><th>Commodity</th><td>${rec.commodity}</td></tr>
+<tr><th>Quantity</th><td>${wrTonnes(rec.quantity_kg)} (${rec.quantity_kg.toLocaleString()} kg)</td></tr>
+<tr><th>Grade</th><td>${rec.quality_grade || '—'}</td></tr>
+<tr><th>Storage location</th><td>${rec.storage_location || '—'}</td></tr>
+<tr><th>Issue date</th><td>${wrDate(rec.issue_date)}</td></tr>
+<tr><th>Maturity date</th><td>${wrDate(rec.maturity_date || '')}</td></tr>
+<tr><th>Status</th><td>${rec.status}</td></tr>
+${rec.collateralized_amount ? `<tr><th>Collateralised value</th><td>${marketMoney(rec.collateralized_amount)}</td></tr>` : ''}
+</table>
+<div class="stamp">ZVIDAMBANO — digitising Zimbabwe&apos;s grain trade. Verify this receipt in-app.</div>
+</body></html>`;
+  registerDownload(key, `${rec.receipt_number}.html`, html, 'text/html');
+  downloadNow(key);
+  toast(`Downloaded ${rec.receipt_number}`, 'success');
+}
+
+async function wrIssue(form: HTMLElement): Promise<void> {
+  const holder = form.getAttribute('data-wr-holder') || '';
+  const commodity = formValue(form, 'wrCommodity');
+  const grade = formValue(form, 'wrGrade');
+  const storage = formValue(form, 'wrStorage');
+  const qty = parseFloat(formValue(form, 'wrQty'));
+  if (!holder || !commodity || !qty || !grade || !storage) {
+    toast('Complete all fields to issue a receipt', 'warn');
+    return;
+  }
+  try {
+    const rec = await issueWarehouseReceipt({
+      holder_id: holder,
+      commodity,
+      quantity_kg: qty,
+      quality_grade: grade,
+      storage_location: storage,
+    });
+    toast(`Receipt ${rec.receipt_number} issued`, 'success');
+    wrRefresh(holder);
+  } catch (err) {
+    toast(err instanceof Error ? err.message : 'Could not issue receipt', 'error');
+  }
+}
+
+export function registerWarehouseReceipts(): void {
+  formRules({
+    wrCommodity: { req: true, msg: 'Choose the commodity.' },
+    wrQty: { req: true, num: { min: 1, max: 500000, step: 50 }, msg: 'Enter the quantity in kg (1 – 500,000).' },
+    wrGrade: { req: true, msg: 'Select a grade.' },
+    wrStorage: { req: true, msg: 'Choose certified storage.' },
+  });
+  asyncFills['warehouse-receipts'] = () => warehouseReceiptsFill(liveUserId());
+  JS.wrPledge = (payload) => { void wrSetStatus(payload, 'PLEDGED'); };
+  JS.wrRelease = (payload) => { void wrSetStatus(payload, 'RELEASED'); };
+  JS.wrDelete = (payload) => { void wrDelete(payload); };
+  JS.wrPdf = (payload) => { void wrPdf(payload); };
+  onValidSubmit('wr-issue', (form) => { void wrIssue(form); });
 }
 
 export function boot(cfg: RoleCfg): void {
   wireMarket();
   wireFreight();
   wireZdoc();
+  registerWarehouseReceipts();
+  registerPush();
+  registerMfa();
 
   const s = cfg.session;
   setLiveAccount(s ? { id: s.id, role: s.role, name: s.name, isDemo: s.isDemo } : null);
@@ -4254,6 +4921,7 @@ export function boot(cfg: RoleCfg): void {
     } catch {
       /* ignore */
     }
+    clearDemoReceipts();
     marketStore = { cat: zvidaGoods(), cart: {}, orders: [], seq: 1, rfqs: [] };
     freightStore = { loads: [], seq: 1 };
   }
