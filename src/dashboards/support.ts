@@ -1,5 +1,6 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars, takePendingUpload, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, formRules, accountHeader, prefsPanel, mfaPanel } from './core';
+﻿import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, textarea, table, listRow, ledger, tabs, feed, itemCard, wf, jsBtn, JS, toast, chips, profile, avatar, uploadBtn, bars, takePendingUpload, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, formRules, accountHeader, prefsPanel, mfaPanel } from './core';
 import { loadSettings, saveSettings, saveProfile, changePassword, formValue, radioValue } from '../lib/settings';
+import { sendSupportReply, findUserByFullName } from '../lib/zvida-live';
 import { resolveDashboardSession } from '../lib/session';
 import type { PillTone } from './core';
 
@@ -30,9 +31,27 @@ wf('s-tk-1006', {
   claim: { to: 'IN PROGRESS', tone: 'amber', toast: 'Ticket #1006 claimed', foot: pill('In progress', 'amber') },
 });
 
-JS.replyTicket = () => {
+JS.replyTicket = async () => {
   const img = takePendingUpload('attach-file');
-  toast(img ? 'Reply sent with attachment — the user will be notified' : 'Reply sent — the user will be notified');
+  const ticket = (document.querySelector<HTMLSelectElement>('[data-val="sTicket"]')?.value || '').trim();
+  const body = (document.querySelector<HTMLTextAreaElement>('[data-val="sReply"]')?.value || '').trim();
+  if (!ticket || !body) {
+    toast('Choose a ticket and type a reply first', 'warn');
+    return;
+  }
+  if (!isLiveMode()) {
+    toast(img ? 'Reply sent with attachment â€” the user will be notified' : 'Reply sent â€” the user will be notified');
+    return;
+  }
+  const name = ticket.split('â€”').pop()?.trim().replace(/\s*\(.*\)$/, '') || '';
+  const receiver = await findUserByFullName(name);
+  if (!receiver) {
+    toast('Could not find that user in the live directory â€” reply not sent', 'error');
+    return;
+  }
+  const sent = await sendSupportReply(body, receiver);
+  if (sent) toast(img ? 'Reply sent with attachment â€” the user will be notified' : 'Reply sent â€” the user will be notified');
+  else toast('Could not send the reply', 'error');
 };
 JS.openResolution = () => {
   toast('Resolution panel opened — track the outcome below');
@@ -115,8 +134,8 @@ const P = {
           title: 'Send a reply',
           icon: ICON.send,
           body: `
-            ${field('Ticket', select(['#1001 — James (Farmer)', '#1002 — Sarah Moyo (Driver)', '#1003 — Peter (Offtaker)', '#1004 — Grace (Vendor)', '#1005 — Tendai (Offtaker)', '#1006 — Chipo (Farmer)']))}
-            ${field('Message', textarea(3, 'Type your reply…'))}
+            ${field('Ticket', select(['#1001 — James (Farmer)', '#1002 — Sarah Moyo (Driver)', '#1003 — Peter (Offtaker)', '#1004 — Grace (Vendor)', '#1005 — Tendai (Offtaker)', '#1006 — Chipo (Farmer)'], 0, { val: 'sTicket' }))}
+            ${field('Message', textarea(3, 'Type your reply…', { val: 'sReply' }))}
             <div class="dsh-btn-row">
               ${uploadBtn('Attach file', 'ghost sm', '*/*', { bucket: 'documents', key: 'attach-file' })}
               ${jsBtn('Send Reply', 'primary', 'replyTicket', '', 'Reply sent — the user will be notified')}

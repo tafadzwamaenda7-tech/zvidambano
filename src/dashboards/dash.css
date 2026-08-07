@@ -1085,6 +1085,16 @@ button.dsh-rec:hover { background: var(--dsh-danger, #b91c1c); color: #fff; }
 .dsh-modal.tone-success .dsh-modal-title { color: var(--dsh-ok); }
 body.dsh-no-scroll { overflow: hidden; }
 
+/* Driver assignment picker */
+.dsh-driver-list { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.dsh-driver-opt { display: flex; align-items: center; gap: 11px; width: 100%; padding: 10px 12px; border: 1px solid var(--dsh-border); border-radius: 12px; background: var(--dsh-surface); color: var(--dsh-text); text-align: left; cursor: pointer; transition: border-color .16s var(--dsh-ease), background .16s var(--dsh-ease), transform .16s var(--dsh-ease); }
+.dsh-driver-opt:hover { border-color: var(--ac); background: var(--ac-soft); transform: translateY(-1px); }
+.dsh-driver-opt:active { transform: translateY(0); }
+.dsh-driver-avatar { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--ac-soft); color: var(--ac); font-size: 12px; font-weight: 750; flex-shrink: 0; }
+.dsh-driver-info { display: flex; flex-direction: column; min-width: 0; }
+.dsh-driver-info b { font-size: 13.5px; font-weight: 650; color: var(--dsh-text); }
+.dsh-driver-info i { font-style: normal; font-size: 12px; color: var(--dsh-text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* ============================================================
    Shell upgrades v2.5 — dark theme, command palette, popovers,
    notification center, keyboard hints, a11y focus states

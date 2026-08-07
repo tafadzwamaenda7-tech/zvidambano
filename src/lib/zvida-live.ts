@@ -177,7 +177,7 @@ interface RefMap {
 
 let refMap: RefMap | null = null;
 
-async function ensureCommodities(): Promise<RefMap> {
+export async function ensureCommodities(): Promise<RefMap> {
   if (refMap) return refMap;
   try {
     const { data } = await supabase.from('commodities').select('id,name');
@@ -188,7 +188,7 @@ async function ensureCommodities(): Promise<RefMap> {
   return refMap;
 }
 
-function findCommodityId(map: RefMap, name: string): string | null {
+export function findCommodityId(map: RefMap, name: string): string | null {
   const n = norm(name);
   if (!n) return null;
   const hit = map.commodities.find((c) => {
@@ -365,7 +365,8 @@ export async function persistRfq(r: LiveRfq): Promise<void> {
     if (r.id) {
       await supabase.from('rfqs').update(row).eq('id', r.id).eq('offtaker_id', myId());
     } else {
-      await supabase.from('rfqs').insert({ ...row, offtaker_id: myId() } as any);
+      const { data } = await supabase.from('rfqs').insert({ ...row, offtaker_id: myId() } as any).select('id').maybeSingle();
+      if (data?.id) r.id = data.id as string;
     }
   } catch {
     /* ignore */
@@ -448,6 +449,39 @@ export async function sendSupportMessage(body: string): Promise<LiveMessage | nu
       read: data.read,
       createdAt: data.created_at,
     };
+  } catch {
+    return null;
+  }
+}
+
+export async function sendSupportReply(body: string, receiverId: string): Promise<LiveMessage | null> {
+  if (!liveConfigured()) return null;
+  if (!receiverId) return null;
+  try {
+    const { data } = await supabase
+      .from('messages')
+      .insert({ sender_id: myId(), receiver_id: receiverId, body } as any)
+      .select()
+      .single();
+    if (!data) return null;
+    return {
+      id: data.id,
+      senderId: data.sender_id,
+      receiverId: data.receiver_id,
+      body: data.body,
+      read: data.read,
+      createdAt: data.created_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function findUserByFullName(name: string): Promise<string | null> {
+  if (!liveConfigured()) return null;
+  try {
+    const { data } = await supabase.from('users').select('id').ilike('full_name', `%${name}%`).limit(1).maybeSingle();
+    return data?.id || null;
   } catch {
     return null;
   }
@@ -716,6 +750,42 @@ export async function persistLoad(l: LiveLoad): Promise<void> {
     }
   } catch {
     /* ignore */
+  }
+}
+
+export interface LiveDriver {
+  id: string;
+  name: string;
+  phone: string;
+  truck: string;
+  trailer?: string;
+}
+
+const DEMO_DRIVERS: LiveDriver[] = [
+  { id: 'demo-john', name: 'John Doe', phone: '+263 77 123 4567', truck: 'ABC-123 · Scania R450', trailer: 'XYZ-789 · Grain Tipper 35t' },
+  { id: 'demo-sarah', name: 'Sarah Moyo', phone: '+263 78 987 6543', truck: 'DEF-456 · DAF XF 480', trailer: 'LMN-012 · Side Tipper 30t' },
+];
+
+/** Real drivers for the "Assign Driver" picker. Demo personas get a fixed pool. */
+export async function fetchDrivers(): Promise<LiveDriver[]> {
+  if (!liveConfigured()) return DEMO_DRIVERS;
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('id, full_name, phone')
+      .eq('role', 'driver')
+      .is('is_demo', false)
+      .order('full_name', { ascending: true });
+    if (error) return DEMO_DRIVERS;
+    return ((data as any[]) || []).map((d) => ({
+      id: d.id,
+      name: d.full_name || 'Driver',
+      phone: d.phone || '',
+      truck: '',
+      trailer: '',
+    }));
+  } catch {
+    return DEMO_DRIVERS;
   }
 }
 

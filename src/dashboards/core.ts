@@ -1,16 +1,17 @@
-/* ============================================================
+﻿/* ============================================================
    ZVIDA Dashboards — shared shell + UI components (v2)
    ============================================================ */
 
-import { syncAll, persistOrder, persistLoad, persistProduct, deleteProduct, persistRfq, deleteRfq, setLiveAccount, getLiveAccount, liveConfigured, fetchUnreadNotifications, markNotificationsRead, sendSupportMessage, fetchMyMessages, fetchProducts, fetchOrders, fetchLoads, fetchOpenRfqs, fetchMyRfqs } from '../lib/zvida-live';
-import type { LiveOrder, LiveLoad, LiveProduct, LiveRfq, LiveMessage } from '../lib/zvida-live';
-import { syncDeliveryStatus, settleContract, assignDriverByName } from '../lib/backend';
-import { uploadListingPhoto, uploadToStorage, getSignedUrl } from '../lib/storage';
+import { syncAll, persistOrder, persistLoad, persistProduct, deleteProduct, persistRfq, deleteRfq, setLiveAccount, getLiveAccount, liveConfigured, fetchUnreadNotifications, markNotificationsRead, sendSupportMessage, fetchMyMessages, fetchProducts, fetchOrders, fetchLoads, fetchOpenRfqs, fetchMyRfqs, fetchDrivers, ensureCommodities, findCommodityId } from '../lib/zvida-live';
+import type { LiveOrder, LiveLoad, LiveProduct, LiveRfq, LiveMessage, LiveDriver } from '../lib/zvida-live';
+import { syncDeliveryStatus, settleContract, assignDriverByName, invokeCreateContract } from '../lib/backend';
+import { uploadListingPhoto, uploadToStorage } from '../lib/storage';
 import type { DashboardSession } from '../lib/session';
-import { onAuthChange } from '../lib/supabase';
+import { supabase, onAuthChange } from '../lib/supabase';
 import { startRealtime } from '../lib/realtime';
 import { signOutAndRedirect } from '../lib/auth-ui';
-import { formValue } from '../lib/settings';
+import { formValue, loadSettings } from '../lib/settings';
+import { setUi, t, money } from '../lib/i18n';
 import { hasPushPermission, ensurePushSubscription, vapidConfigured } from '../lib/pwa';
 import { notifyUser } from '../lib/notifications';
 import { getMfaStatus, enrollTotp, verifyTotpEnrollment, unEnrollMfa, type EnrollResult } from '../lib/auth';
@@ -1161,7 +1162,7 @@ function mkSave(): void {
 }
 
 export function marketMoney(v: number): string {
-  return '$' + v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return money(v);
 }
 
 export function marketCatalog(seller?: string): MarketProduct[] {
@@ -1177,12 +1178,26 @@ export function marketAddProduct(p: MarketProduct): void {
   mkLoad()!.cat.unshift(p);
   mkSave();
   void persistProduct(p as unknown as LiveProduct);
+  void autoMatchRfq(p).then((matched) => {
+    if (matched) {
+      toast('RFQ matched — contract created with buyer', 'success');
+      refresh();
+    }
+  });
 }
 
 export function marketRemoveProduct(id: string): void {
   mkLoad()!.cat = mkLoad()!.cat.filter((p) => p.id !== id);
   mkSave();
   void deleteProduct(id);
+}
+
+export function marketUpdateProduct(oldName: string, updates: Partial<MarketProduct>): void {
+  const idx = mkLoad()!.cat.findIndex((p) => p.name === oldName);
+  if (idx < 0) return;
+  mkLoad()!.cat[idx] = { ...mkLoad()!.cat[idx], ...updates };
+  mkSave();
+  void persistProduct(mkLoad()!.cat[idx] as unknown as LiveProduct);
 }
 
 export function marketOrders(seller?: string): MarketOrder[] {
@@ -1263,13 +1278,67 @@ export function marketOpenRfqs(): LiveRfq[] {
 export function marketAddRfq(r: LiveRfq): void {
   mkLoad()!.rfqs.unshift(r);
   mkSave();
-  void persistRfq(r);
+  void persistRfq(r).then(() => {
+    if (r.id) mkSave();
+  });
 }
 
 export function marketRemoveRfq(id: string): void {
   mkLoad()!.rfqs = mkLoad()!.rfqs.filter((r) => r.id !== id);
   mkSave();
   void deleteRfq(id);
+}
+
+/** Live accounts only: when a farmer posts a listing, auto-create a contract
+    against the first OPEN offtaker RFQ whose commodity matches and whose max
+    price covers the farmer's reserve. Returns true when a contract was made. */
+async function autoMatchRfq(p: MarketProduct): Promise<boolean> {
+  if (!liveConfigured()) return false;
+  const me = getLiveAccount();
+  if (!me || me.role !== 'farmer') return false;
+  try {
+    const store = mkLoad()!;
+    const hit = store.rfqs.find((r) => {
+      if (r.status !== 'OPEN' || !r.maxPrice || r.offtakerId === me.id) return false;
+      const c = r.commodity.toLowerCase().trim();
+      if (!c || c.length < 2) return false;
+      const n = p.name.toLowerCase();
+      return (n.includes(c) || c.includes(n.split(' ')[0])) && p.price <= r.maxPrice;
+    });
+    if (!hit) return false;
+    const [commMap, { data: broker }] = await Promise.all([
+      ensureCommodities(),
+      supabase.from('users').select('id').in('role', ['broker', 'admin']).order('created_at', { ascending: true }).limit(1).maybeSingle(),
+    ]);
+    const commodityId = findCommodityId(commMap, hit.commodity);
+    if (!commodityId || !broker) return false;
+    const { data: listingRow } = await supabase.from('listings').select('id').eq('seller_id', me.id).eq('title', p.name).maybeSingle();
+    const farmerPrice = Math.round(p.price);
+    const offtakerPrice = Math.max(farmerPrice, Math.min(hit.maxPrice, Math.round(farmerPrice * 1.2)));
+    const res = await invokeCreateContract({
+      farmer_id: me.id,
+      offtaker_id: hit.offtakerId,
+      broker_id: broker.id as string,
+      commodity_id: commodityId,
+      listing_id: listingRow?.id,
+      quantity: Math.round(hit.quantity * (hit.unit === 't' ? 1000 : 1)),
+      unit: 'kg',
+      farmer_price: farmerPrice,
+      offtaker_price: offtakerPrice,
+    });
+    if (res.error) {
+      console.error('[autoMatchRfq]', res.error);
+      return false;
+    }
+    hit.status = 'MATCHED';
+    mkSave();
+    void persistRfq(hit);
+    void notifyUser(hit.offtakerId, 'RFQ matched', `${p.name} matches your request — contract created`, 'success', { url: '#buy' });
+    return true;
+  } catch (e) {
+    console.error('[autoMatchRfq]', e);
+    return false;
+  }
 }
 
 export function marketPlace(buyer: string): MarketOrder {
@@ -1709,7 +1778,7 @@ export function loadTermNote(l: Consignment): string {
 }
 
 export function loadMoney(v: number): string {
-  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return money(v);
 }
 
 /* ---------- Blind-principal masking ---------- */
@@ -1786,13 +1855,10 @@ function lgTransition(l: Consignment, action: string, note: string): void {
     l.history.push({ t, d });
   };
   const qtyKg = l.weightMode === 'weighbridge' ? Math.abs(l.weight2 - l.weight1) : l.inputKg || l.bags * 50 + l.buckets * l.bucketKg;
+  let syncAction = action;
   switch (action) {
     case 'assign':
-      l.driver = 'John Doe';
-      l.phone = '+263 77 123 4567';
-      l.truck = 'ABC-123 · Scania R450';
-      l.trailer = 'XYZ-789 · Grain Tipper 35t';
-      set('PENDING', 0, 'Driver assigned', note || 'Assigned to John Doe · dispatched');
+      set('PENDING', 0, 'Driver assigned', note || `Assigned to ${l.driver || 'a driver'} · dispatched`);
       break;
     case 'start':
       set('LOADING', 1, 'Loading started', note || 'Truck on site — loading in progress');
@@ -1817,9 +1883,15 @@ function lgTransition(l: Consignment, action: string, note: string): void {
       set('PENDING_PAYMENT', 6, 'Second weight recorded — payment pending', `Net ${l.qty.toLocaleString()} kg · ${loadMoney(l.amount)} · ${loadTermNote(l)}`);
       break;
     case 'deliver':
-      if (l.status === 'OFFLOADING') set('PENDING_PAYMENT', 6, 'Delivery confirmed', note || `Signed off · ${loadTermNote(l)}`);
-      break;
-    case 'settle':
+      if (l.status === 'OFFLOADING') {
+        if ((l.payTerm === 'COD' || l.payTerm === 'COC') && l.qty) {
+          set('PAID', 7, 'Delivery confirmed — payment released', `Signed off · $loadMoney(l.amount)} auto-paid to $l.supplier}`);
+          syncAction = 'settle';
+        } else {
+          set('PENDING_PAYMENT', 6, 'Delivery confirmed', note || `Signed off · $loadTermNote(l)}`);
+        }
+      }
+      break;case 'settle':
       set('PAID', 7, 'Payment released', `${loadMoney(l.amount)} paid to ${l.supplier} · ${loadTermNote(l)}`);
       break;
     case 'cancel':
@@ -1833,7 +1905,7 @@ function lgTransition(l: Consignment, action: string, note: string): void {
   }
   lgSave();
   void persistLoad(l as unknown as LiveLoad);
-  void syncLiveLoad(l, action);
+  void syncLiveLoad(l, syncAction);
 }
 
 /** Push a real consignment transition to the backend (edge functions). */
@@ -1855,6 +1927,56 @@ export function freightUpdate(id: string, action: string, note?: string): void {
   if (!l) return;
   lgTransition(l, action, note || '');
 }
+
+/* ---------- Driver assignment picker ---------- */
+let lgDriverPool: LiveDriver[] = [];
+
+export function lgAssignDriver(id: string): void {
+  const l = load(id);
+  if (!l) return;
+  if (l.driver) {
+    toast(`Already assigned to ${l.driver}`, 'info');
+    return;
+  }
+  void (async () => {
+    lgDriverPool = await fetchDrivers();
+    const drivers = lgDriverPool.filter((d) => d.id);
+    const body = drivers.length
+      ? `<p class="dsh-modal-msg">Assign a driver to <b>${l.ref}</b> — ${l.commodity} · ${l.from || '—'} → ${l.dest || '—'}.</p>
+        <div class="dsh-driver-list">
+        ${drivers.map((d) => `
+          <button type="button" class="dsh-driver-opt" data-js="lgPickDriver:${id}|${d.id}">
+            <span class="dsh-driver-avatar">${(d.name || '?').split(/\s+/).map((p) => p[0]).join('').slice(0, 2).toUpperCase()}</span>
+            <span class="dsh-driver-info"><b>${d.name}</b><i>${d.truck || (d.phone ? d.phone : 'Available now')}</i></span>
+          </button>`).join('')}
+        </div>`
+      : `<p class="dsh-modal-msg">No drivers available yet. Add a user with role <b>driver</b> to start assigning loads.</p>`;
+    openModal(modalHtml({
+      title: `Assign Driver · ${l.ref}`,
+      body,
+      foot: `<div class="dsh-btn-row right">${jsBtn('Cancel', 'ghost', 'closeModal')}</div>`,
+    }));
+  })();
+}
+
+export function pickDriverForLoad(id: string, driverId: string): void {
+  const l = load(id);
+  const d = lgDriverPool.find((x) => x.id === driverId);
+  if (!l || !d) return;
+  l.driver = d.name;
+  if (d.phone) l.phone = d.phone;
+  if (d.truck) l.truck = d.truck;
+  if (d.trailer) l.trailer = d.trailer;
+  closeModal();
+  lgTransition(l, 'assign', `Assigned to ${d.name}`);
+  toast(`${d.name} assigned to ${l.ref}`, 'success');
+  refresh();
+}
+
+JS.lgPickDriver = (payload: string) => {
+  const [id, driverId] = (payload || '|').split('|');
+  pickDriverForLoad(id, driverId);
+};
 
 export function loadSteps(l: Consignment): string {
   return `<div class="dsh-lg-steps">${l.flow
@@ -3482,8 +3604,12 @@ export function wireFreight(): void {
   if (JS.lgAction) return;
   JS.lgAction = (payload) => {
     const [id, action, ...rest] = (payload || '').split(':');
+    if (action === 'assign') {
+      void lgAssignDriver(id);
+      return;
+    }
     freightUpdate(id, action, rest.join(':'));
-    toast(action === 'settle' ? 'Payment released — receipt sent' : 'Freight updated');
+    toast(action === 'settle' ? 'Payment released — receipt sent' : action === 'deliver' && load(id)?.status === 'PAID' ? 'Delivery confirmed — payment auto-released' : 'Freight updated');
     refresh();
   };
   JS.lgWeigh = (payload) => {
@@ -4028,13 +4154,13 @@ document.addEventListener('keydown', (e) => {
 function navHtml(cfg: RoleCfg): string {
   const pages = cfg.pages.filter((p) => !p.hidden);
   const activeId = cfg.pages[0].id;
-  const link = (p: PageCfg) => `<a href="#${p.id}" class="dsh-link ${p.id === activeId ? 'active' : ''}" data-page="${p.id}">${svg(p.icon)}<span>${p.label}</span></a>`;
-  if (!cfg.navGroups) return `<div class="dsh-nav-label">Menu</div>${pages.map(link).join('')}`;
+  const link = (p: PageCfg) => `<a href="#${p.id}" class="dsh-link ${p.id === activeId ? 'active' : ''}" data-page="${p.id}">${svg(p.icon)}<span>${t(p.label)}</span></a>`;
+  if (!cfg.navGroups) return `<div class="dsh-nav-label">${t('Menu')}</div>${pages.map(link).join('')}`;
   let html = '';
   for (const g of cfg.navGroups) {
     const members = pages.filter((p) => g.pages.includes(p.id));
     if (!members.length) continue;
-    html += `<div class="dsh-nav-group"><div class="dsh-nav-label">${g.label}</div>${members.map(link).join('')}</div>`;
+    html += `<div class="dsh-nav-group"><div class="dsh-nav-label">${t(g.label)}</div>${members.map(link).join('')}</div>`;
   }
   return html;
 }
@@ -4624,6 +4750,7 @@ export function boot(cfg: RoleCfg): void {
   const s = cfg.session;
   setLiveAccount(s ? { id: s.id, role: s.role, name: s.name, isDemo: s.isDemo } : null);
   const isDemo = Boolean(s && s.isDemo);
+  void loadSettings().then((st) => setUi(st.language, st.currency));
   const name = isDemo ? cfg.name : s?.name || cfg.name;
   const company = isDemo ? cfg.company : s?.company || cfg.company;
   const initials = isDemo ? cfg.initials : s?.initials || cfg.initials;
@@ -4679,7 +4806,7 @@ export function boot(cfg: RoleCfg): void {
       <header class="dsh-topbar">
         <button type="button" class="dsh-menu-btn" id="dsh-menu" aria-label="Toggle menu">${svg(ICON.menu)}</button>
         <div class="dsh-title">
-          <h1 id="dsh-title">${cfg.pages[0].title}</h1>
+          <h1 id="dsh-title">${t(cfg.pages[0].title)}</h1>
           <p id="dsh-sub">${cfg.pages[0].sub || company}</p>
         </div>
         <button type="button" class="dsh-search" id="dsh-searchbox" aria-label="Search (Ctrl+K)">${svg(ICON.search)}<span class="dsh-search-ph">Search ZVIDA…</span><kbd class="dsh-kbd">ctrl&nbsp;K</kbd></button>
@@ -4929,9 +5056,9 @@ export function boot(cfg: RoleCfg): void {
   const render = (id: string) => {
     closeAllPops();
     const isNotifPage = id === 'notifications';
-    const page = cfg.pages.find((p) => p.id === id) || cfg.pages[0];
-    title.textContent = isNotifPage ? 'Notifications' : page.title;
-    sub.textContent = isNotifPage ? 'Everything happening in your workspace' : (page.sub || company);
+  const page = cfg.pages.find((p) => p.id === id) || cfg.pages[0];
+  title.textContent = isNotifPage ? t('Notifications') : t(page.title);
+  sub.textContent = isNotifPage ? 'Everything happening in your workspace' : (page.sub || company);
     let html = isNotifPage ? notificationsPageHtml(cfg) : page.render();
     if (!isDemo && !isNotifPage) {
       const m = mkLoad()!;

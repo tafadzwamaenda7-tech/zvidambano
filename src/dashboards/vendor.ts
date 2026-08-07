@@ -1,6 +1,6 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, img, itemCard, profile, wf, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, chips, miniBar, marketCatalog, marketAddProduct, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, disclose, submitBtn, onValidSubmit, formRules, takePendingUpload } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, select, table, listRow, img, itemCard, profile, wf, jsBtn, uploadBtn, registerDownload, downloadNow, JS, toast, chips, miniBar, marketCatalog, marketAddProduct, marketUpdateProduct, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, disclose, submitBtn, onValidSubmit, formRules, takePendingUpload } from './core';
 import type { LiveProduct } from '../lib/zvida-live';
-import { persistProduct } from '../lib/zvida-live';
+import { saveSettings } from '../lib/settings';
 import { resolveDashboardSession } from '../lib/session';
 import type { PillTone, MarketProduct } from './core';
 
@@ -34,17 +34,15 @@ onValidSubmit('v-product', (form) => {
     const oldName = PROD_EDIT.oldName;
     const p = marketCatalog(vendorSeller()).find((x) => x.name === oldName);
     if (p) {
-      p.name = name;
-      p.price = price;
-      p.unit = unit;
+      const updates: Partial<MarketProduct> = { name, price, unit, stock };
       const img = takePendingUpload('vprod-img');
-      if (img) {
-        p.thumb = img;
-        void persistProduct(p as unknown as LiveProduct);
-      }
+      if (img) updates.thumb = img;
+      marketUpdateProduct(oldName, updates);
+      toast('Product updated');
+    } else {
+      toast('Product no longer exists — it may have been deleted', 'error');
     }
     PROD_EDIT = null;
-    toast('Product updated');
   } else {
     const p: MarketProduct = { id: 'v' + Date.now(), name, category, price, unit, seller: vendorSeller(), stock, rating: 4.5, reviews: 0, thumb: takePendingUpload('vprod-img') || 'fert' };
     marketAddProduct(p);
@@ -81,11 +79,23 @@ JS.cancelProdEdit = () => {
 };
 JS.saveVendorSettings = () => {
   const b = document.querySelector('[data-js="saveVendorSettings"]') as HTMLButtonElement | null;
-  if (b) {
-    b.textContent = 'Saved';
-    b.disabled = true;
+  const pay = document.querySelector<HTMLInputElement>('[data-val="vPay"]')?.value?.trim() || '';
+  const tax = document.querySelector<HTMLInputElement>('[data-val="vTax"]')?.value?.trim() || '';
+  if (!pay) {
+    toast('Enter your mobile money / bank details first', 'warn');
+    return;
   }
-  toast('Bank details saved');
+  void saveSettings({ payment: pay, tax }).then((r) => {
+    if (r.ok) {
+      if (b) {
+        b.textContent = 'Saved';
+        b.disabled = true;
+      }
+      toast('Bank details saved');
+    } else {
+      toast(r.error || 'Could not save bank details', 'error');
+    }
+  });
 };
 JS.downloadStatement = () => {
   downloadNow('v-stmt');
@@ -355,8 +365,8 @@ const P = {
               ${field('Account number', input('•••• 4921'))}
             </div>
             <div class="dsh-field-grid">
-              ${field('Mobile money', input('EcoCash +263 77 555 1212'))}
-              ${field('Tax number', input('ZW-8842-113'))}
+              ${field('Mobile money', input('EcoCash +263 77 555 1212', undefined, { val: 'vPay' }))}
+              ${field('Tax number', input('ZW-8842-113', undefined, { val: 'vTax' }))}
             </div>
             <div class="dsh-btn-row">${jsBtn('Save Changes', 'primary', 'saveVendorSettings', '', 'Bank details saved')}</div>`,
         })}

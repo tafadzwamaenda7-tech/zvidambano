@@ -1,4 +1,5 @@
 import { boot, ICON, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, listRow, ledger, itemCard, profile, tabs, wf, jsBtn, registerDownload, downloadNow, JS, toast, downloadBtn, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, disclose, pwCheck, submitBtn, onValidSubmit, formRules, restoreSubmit, mfaPanel } from './core';
+import { saveSettings, changePassword, formValue } from '../lib/settings';
 import { resolveDashboardSession } from '../lib/session';
 
 formRules({
@@ -8,7 +9,11 @@ formRules({
 });
 
 onValidSubmit('d-settings', (form) => {
-  toast('Payment settings saved');
+  void saveSettings({ payment: formValue(form, 'dPay') }).then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Payment settings saved');
+    else toast(r.error || 'Could not save payment settings', 'error');
+  });
 });
 
 onValidSubmit('d-security', (form) => {
@@ -18,7 +23,11 @@ onValidSubmit('d-security', (form) => {
     restoreSubmit(form);
     return;
   }
-  toast('Password updated — use it to sign in next time');
+  void changePassword(pws[0]?.value || '').then((r) => {
+    restoreSubmit(form);
+    if (r.ok) toast('Password updated — use it to sign in next time');
+    else toast(r.error || 'Could not update password', 'error');
+  });
 });
 
 JS.callDispatch = () => {
@@ -29,11 +38,23 @@ JS.openWhatsApp = () => {
 };
 JS.saveSettings = () => {
   const b = document.querySelector('[data-js="saveSettings"]') as HTMLButtonElement | null;
-  if (b) {
-    b.textContent = 'Saved';
-    b.disabled = true;
+  const inp = document.querySelector<HTMLInputElement>('[data-val="dPay"]');
+  const pay = inp?.value?.trim() || '';
+  if (!pay) {
+    toast('Enter a payout method first', 'warn');
+    return;
   }
-  toast('Payment settings saved');
+  void saveSettings({ payment: pay }).then((r) => {
+    if (r.ok) {
+      if (b) {
+        b.textContent = 'Saved';
+        b.disabled = true;
+      }
+      toast('Payment settings saved');
+    } else {
+      toast(r.error || 'Could not save payment settings', 'error');
+    }
+  });
 };
 JS.downloadStatement = () => {
   downloadNow('d-stmt');

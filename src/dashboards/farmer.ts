@@ -1,4 +1,4 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, pwCheck, disclose, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketMyOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, liveUserId, marketAddProduct, marketRemoveProduct, asyncFills, submitBtn, onValidSubmit, formRules, takePendingUpload, restoreSubmit, accountHeader, prefsPanel, WEIGHBRIDGES, weighMethodField, weightModeLabel, warehouseReceiptsPanel, mfaPanel } from './core';
+﻿import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, ticker, banner, field, input, select, textarea, table, listRow, timeline, steps, ring, img, itemCard, profile, docs, chat, chips, wf, routeMap, invoice, ledger, bars, registerDownload, downloadBtn, downloadNow, uploadBtn, jsBtn, JS, toast, pwCheck, disclose, marketCatalog, marketProductCard, marketCartLine, marketCartLines, marketQty, marketSubtotal, marketMoney, marketPlace, marketMyOrders, marketSteps, marketOrderCard, marketOrderGroup, marketLastOrder, marketRecommend, marketBucket, loadCatalog, loadCard, zdocDocuments, emptyState, isLiveMode, liveUserName, liveUserId, marketAddProduct, marketUpdateProduct, marketRemoveProduct, asyncFills, submitBtn, onValidSubmit, formRules, takePendingUpload, restoreSubmit, accountHeader, prefsPanel, WEIGHBRIDGES, weighMethodField, weightModeLabel, warehouseReceiptsPanel, mfaPanel } from './core';
 import type { WeightMode } from './core';
 import { loadSettings, loadFarm, saveSettings, saveProfile, saveFarm, changePassword, formValue, radioValue } from '../lib/settings';
 import { fetchMyMessages, sendSupportMessage } from '../lib/zvida-live';
@@ -94,7 +94,7 @@ wf('f-wheat', {
 
 const LISTINGS: { title: string; thumb: string; badge: string; badgeTone: PillTone; meta: string; foot: string }[] = [];
 
-let LIST_EDIT: null | { kind: 'soya' } = null;
+let LIST_EDIT: null | { kind: 'soya'; name?: string } = null;
 let SOYA: { qty: string; reserve: string; thumb?: string } = { qty: '10', reserve: '450' };
 
 formRules({
@@ -129,19 +129,16 @@ onValidSubmit('f-listing', (form) => {
     const commodity = (controls[0]?.value || 'Maize').trim();
     const qty = parseFloat(controls[1]?.value || '0') || 0;
     const reserve = parseFloat(controls[4]?.value || '0') || 0;
-    marketAddProduct({
-      id: 'fp' + Date.now(),
-      name: `${commodity} · ${qty}t · Reserve $${reserve}/t${wbNote}`,
-      category: 'Grain',
-      price: reserve,
-      unit: 't',
-      seller: liveUserName(),
-      stock: qty,
-      rating: 4.5,
-      reviews: 0,
-      thumb: img || (commodity.toLowerCase().includes('soya') ? 'soya' : commodity.toLowerCase().includes('wheat') ? 'wheat' : 'grain'),
-    });
-    toast('Listing submitted — ZVIDA will review it', 'info');
+    const name = `${commodity} · ${qty}t · Reserve $${reserve}/t${wbNote}`;
+    const thumb = img || (commodity.toLowerCase().includes('soya') ? 'soya' : commodity.toLowerCase().includes('wheat') ? 'wheat' : 'grain');
+    if (LIST_EDIT?.name) {
+      marketUpdateProduct(LIST_EDIT.name, { name, price: reserve, unit: 't', stock: qty, thumb });
+      LIST_EDIT = null;
+      toast('Listing updated', 'info');
+    } else {
+      marketAddProduct({ id: 'fp' + Date.now(), name, category: 'Grain', price: reserve, unit: 't', seller: liveUserName(), stock: qty, rating: 4.5, reviews: 0, thumb });
+      toast('Listing submitted - ZVIDA will review it', 'info');
+    }
     window.location.hash = '#today';
     window.location.hash = '#sell';
     return;
@@ -168,8 +165,8 @@ onValidSubmit('f-listing', (form) => {
   window.location.hash = '#sell';
 });
 
-JS.editListing = (_p, el) => {
-  LIST_EDIT = { kind: 'soya' };
+JS.editListing = (name) => {
+  LIST_EDIT = { kind: 'soya', name };
   window.location.hash = '#today';
   window.location.hash = '#sell';
   toast(`Listing loaded into the form — update and save`, 'info');
@@ -451,7 +448,7 @@ const P = {
                 badgeTone: 'green',
                 open: '#sell',
                 meta: `$${p.price}/${p.unit} · ${p.stock}${p.unit} available · Viewable by ZVIDA.`,
-                foot: `${jsBtn('Withdraw', 'danger sm', 'withdrawListing', p.id, 'Listing withdrawn')}`,
+                foot: `${jsBtn('Edit', 'ghost sm', 'editListing', p.name, 'Listing loaded into the form')}${jsBtn('Withdraw', 'danger sm', 'withdrawListing', p.id, 'Listing withdrawn')}`,
               })).join('')
             : emptyState({ icon: ICON.sell, title: 'No active listings yet', sub: 'Submit a listing above — ZVIDA reviews it, then matches it to buyers.', action: 'Create a listing', actionHref: '#sell' }))
         : `${LISTINGS.map((l) => itemCard({ title: l.title, thumb: l.thumb, badge: l.badge, badgeTone: l.badgeTone, time: l.meta, open: '#sell', foot: l.foot })).join('')}

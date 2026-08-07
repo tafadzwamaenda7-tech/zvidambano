@@ -3,7 +3,6 @@
  */
 
 import { supabase } from './supabase';
-import { notificationsCRUD } from './crud';
 
 export async function sendEmailNotification(to: string, type: string, data?: any) {
   const { error } = await supabase.functions.invoke('send-email', {
@@ -27,7 +26,7 @@ export async function notifyUser(
   options?: { email?: boolean; sms?: boolean; phone?: string; url?: string }
 ) {
   try {
-    await notificationsCRUD.create({ user_id: userId, title, body, type });
+    await supabase.from('notifications').insert({ user_id: userId, title, body, type });
   } catch (err) {
     console.error('[Notifications] In-app failed:', err);
   }
@@ -58,30 +57,5 @@ export async function sendPushNotification(userId: string, title: string, body?:
     if (error) console.error('[Notifications] Push failed:', error);
   } catch (err) {
     console.error('[Notifications] Push failed:', err);
-  }
-}
-
-export async function getNotifications(userId: string, unreadOnly: boolean = false) {
-  try {
-    if (unreadOnly) return await notificationsCRUD.getUnread(userId);
-    return await notificationsCRUD.getByUser(userId);
-  } catch (err) {
-    throw err;
-  }
-}
-
-export async function markNotificationRead(id: string) {
-  try {
-    return await notificationsCRUD.markAsRead(id);
-  } catch (err) {
-    throw err;
-  }
-}
-
-export async function markAllNotificationsRead(userId: string) {
-  try {
-    await notificationsCRUD.markAllAsRead(userId);
-  } catch (err) {
-    throw err;
   }
 }
