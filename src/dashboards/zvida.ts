@@ -1,4 +1,4 @@
-import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, zdocDocuments, emptyState, formRules, FORM_RULES, checkField, refresh, profile, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, accountHeader, prefsPanel, mfaPanel } from './core';
+import { boot, ICON, svg, pill, btn, hero, kpis, actions, sec, panel, split, banner, field, input, textarea, table, listRow, ledger, bars, tabs, img, feed, itemCard, wf, jsBtn, registerDownload, downloadNow, JS, toast, invoice, chips, marketOrders, marketOrderCard, marketOrderGroup, marketBucket, marketMoney, loadCatalog, loadCard, freightKpis, freightFeed, loadMoney, lgCreateConsignment, zdocDocuments, emptyState, formRules, FORM_RULES, checkField, refresh, profile, submitBtn, onValidSubmit, pwCheck, disclose, isLiveMode, liveUserName, asyncFills, restoreSubmit, accountHeader, prefsPanel, mfaPanel } from './core';
 import { resolveDashboardSession } from '../lib/session';
 import { liveConfigured, getLiveAccount } from '../lib/zvida-live';
 import { supabase } from '../lib/supabase';
@@ -40,53 +40,80 @@ JS.exportCarbon = () => {
   toast('Carbon footprint report exported');
 };
 
+/* Demo auto-match: actually create the three visible smart-queue consignments
+   in the local freight store so "Match All" does something real instead of
+   just toasting. Returns the number of consignments created. */
+function demoAutoMatch(): number {
+  const matches: Parameters<typeof lgCreateConsignment>[0][] = [
+    { commodity: 'Maize', art: 'grain', supplier: 'James (Farmer)', receiver: 'Miller Corp (Offtaker)', from: 'Farm 42, Ruwa', dest: 'Miller Corp, Harare', unitPrice: 200, payTerm: 'COD' },
+    { commodity: 'Wheat', art: 'wheat', supplier: 'Peter (Farmer)', receiver: 'Miller Corp (Offtaker)', from: 'Farm 12, Marondera', dest: 'Miller Corp, Harare', unitPrice: 320, payTerm: 'NET_7' },
+    { commodity: 'Soya', art: 'soya', supplier: 'James (Farmer)', receiver: 'ZVIDA', from: 'Farm 42, Ruwa', dest: 'ZVIDA Depot, Chegutu', unitPrice: 450, payTerm: 'COC' },
+  ];
+  let n = 0;
+  for (const m of matches) {
+    lgCreateConsignment(m);
+    n++;
+  }
+  return n;
+}
+
 /* Real contract creation for live admin/broker accounts. In demo mode the
-   button keeps its original "contract created" toast. In live mode it wires
-   the newest active listing (farmer) to an offtaker through create-contract,
-   creating the delivery row so the assigned driver sees the consignment. */
+   button creates the demo consignments in the freight store. In live mode it
+   matches every active farmer listing to an offtaker through create-contract,
+   creating the delivery rows so the assigned driver sees the consignments. */
 JS.zAutoMatch = async (_payload: string) => {
   if (!liveConfigured()) {
-    toast('Contract created — parties notified');
+    const n = demoAutoMatch();
+    toast(`${n} contracts created — parties notified`);
+    refresh();
     return;
   }
   try {
     const [{ data: farmers }, { data: offtakers }, { data: drivers }, { data: commodities }, { data: listings }] = await Promise.all([
-      supabase.from('users').select('id, full_name').eq('role', 'farmer').order('created_at', { ascending: true }).limit(1),
-      supabase.from('users').select('id, full_name').eq('role', 'offtaker').order('created_at', { ascending: true }).limit(1),
+      supabase.from('users').select('id, full_name').eq('role', 'farmer').order('created_at', { ascending: true }).limit(5),
+      supabase.from('users').select('id, full_name').eq('role', 'offtaker').order('created_at', { ascending: true }).limit(5),
       supabase.from('users').select('id, full_name').eq('role', 'driver').order('created_at', { ascending: true }).limit(1),
-      supabase.from('commodities').select('id, name').limit(1),
-      supabase.from('listings').select('id, asking_price').eq('status', 'active').limit(1),
+      supabase.from('commodities').select('id, name').limit(5),
+      supabase.from('listings').select('id, asking_price').eq('status', 'active').limit(5),
     ]);
-    const farmer = farmers?.[0];
-    const offtaker = offtakers?.[0];
-    const driver = drivers?.[0];
-    const commodity = commodities?.[0];
     const broker = getLiveAccount();
-    if (!farmer || !offtaker || !commodity || !broker) {
+    if (!broker) {
+      toast('Sign in as a broker or admin to match', 'warn');
+      return;
+    }
+    if (!farmers?.length || !offtakers?.length || !commodities?.length) {
       toast('Add at least one farmer, offtaker and commodity first', 'warn');
       return;
     }
-    const listing = listings?.[0];
-    const farmerPrice = listing && Number(listing.asking_price) > 0 ? Number(listing.asking_price) : 200;
-    const quantity = 10000; // 10 t in kg
-    const res = await invokeCreateContract({
-      farmer_id: farmer.id,
-      offtaker_id: offtaker.id,
-      broker_id: broker.id,
-      commodity_id: commodity.id,
-      listing_id: listing?.id,
-      quantity,
-      unit: 'kg',
-      farmer_price: farmerPrice,
-      offtaker_price: Math.max(1, Math.round(farmerPrice * 1.2)),
-      delivery: driver ? { driver_id: driver.id, origin: 'Supplier farm', destination: 'ZVIDA Depot', vehicle_reg: '—' } : undefined,
-    });
-    if (res.error) {
-      console.error('[zAutoMatch]', res.error);
-      toast('Contract creation failed — see console', 'error');
-      return;
+    const driver = drivers?.[0];
+    const activeListings = listings?.length ? listings : [null];
+    let created = 0;
+    for (let i = 0; i < activeListings.length; i++) {
+      const farmer = farmers[i % farmers.length];
+      const offtaker = offtakers[i % offtakers.length];
+      const commodity = commodities[i % commodities.length];
+      const listing = activeListings[i] as { id: string; asking_price: number | null } | null;
+      const farmerPrice = listing && Number(listing.asking_price) > 0 ? Number(listing.asking_price) : 200;
+      const quantity = 10000; // 10 t in kg
+      const res = await invokeCreateContract({
+        farmer_id: farmer.id,
+        offtaker_id: offtaker.id,
+        broker_id: broker.id,
+        commodity_id: commodity.id,
+        listing_id: listing?.id,
+        quantity,
+        unit: 'kg',
+        farmer_price: farmerPrice,
+        offtaker_price: Math.max(1, Math.round(farmerPrice * 1.2)),
+        delivery: driver ? { driver_id: driver.id, origin: 'Supplier farm', destination: 'ZVIDA Depot', vehicle_reg: '—' } : undefined,
+      });
+      if (res.error) {
+        console.error('[zAutoMatch]', res.error);
+        continue;
+      }
+      created++;
     }
-    toast('Contract created — parties notified');
+    toast(`${created} contract${created === 1 ? '' : 's'} created — parties notified`);
     refresh();
   } catch (e) {
     console.error('[zAutoMatch]', e);
@@ -362,7 +389,7 @@ const P = {
         ${smartMatch(2, 'Wheat', 15, 380, 420, 600, 'ANON-3', 'ANON-B3', 40)}
         ${smartMatch(3, 'Soya', 10, 450, 500, 500, 'ANON-2', 'ANON-B2', 70)}
       </div>
-      <div class="dsh-btn-row" style="margin-top:16px">${jsBtn('Match All', 'primary', 'zAutoMatch', 'all', '5 contracts created — parties notified')}</div>
+      <div class="dsh-btn-row" style="margin-top:16px">${jsBtn('Match All', 'primary', 'zAutoMatch', 'all', 'Matching complete — parties notified')}</div>
     `,
   },
   deliveries: {

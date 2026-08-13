@@ -231,6 +231,48 @@ function orderRef(): string {
   return 'ZV-ORD-' + Math.random().toString(36).slice(2, 8).toUpperCase();
 }
 
+/* Demo (@zvida.zw) accounts never read Supabase in the dashboards, so an order
+   placed here would be invisible in their Orders page. Drop it into a small
+   inbox that the demo dashboard merges into its local store on load. */
+const DEMO_INBOX_KEY = 'zvida_demo_orders';
+
+function persistDemoOrder(draft: { ref: string; buyer: string; address: string; delivery: string; payment: string; items: { name: string; qty: number; unit: string; price: number }[]; total: number }): void {
+  const user = getAuthState().user;
+  if (!user || !String(user.email || '').toLowerCase().endsWith('@zvida.zw')) return;
+  try {
+    const inbox = JSON.parse(localStorage.getItem(DEMO_INBOX_KEY) || '[]');
+    if (!Array.isArray(inbox)) inbox.length = 0;
+    inbox.push({
+      id: draft.ref,
+      ref: draft.ref,
+      buyer: draft.buyer,
+      userId: '',
+      address: draft.address,
+      delivery: draft.delivery,
+      payment: draft.payment,
+      placedAt: `${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} · just now`,
+      items: draft.items.map((i) => ({
+        id: i.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, ''),
+        name: i.name,
+        price: i.price,
+        qty: i.qty,
+        thumb: 'grain',
+        seller: 'ZVIDA',
+        unit: i.unit,
+      })),
+      status: 'NEW',
+      tone: 'amber',
+      flow: ['Placed', 'Confirmed', 'Processing', 'Shipped', 'Out for delivery', 'Delivered'],
+      step: 0,
+      total: draft.total,
+      history: [{ t: 'Placed', d: 'Order placed · seller notified' }],
+    });
+    localStorage.setItem(DEMO_INBOX_KEY, JSON.stringify(inbox));
+  } catch {
+    /* storage unavailable — ignore */
+  }
+}
+
 function initOrderFlow(): void {
   const modal = document.getElementById('order-modal');
   const form = document.getElementById('order-form') as HTMLFormElement | null;
@@ -337,7 +379,8 @@ function initOrderFlow(): void {
         toast.error('Order failed', error.message || 'Could not place your order.');
         return;
       }
-      toast.success('Order placed', `Reference ${ref} — our sales team will contact you shortly.`);
+      persistDemoOrder({ ref, buyer: user.user_metadata?.full_name || name, address, delivery, payment, items, total });
+      toast.success('Order placed', `Reference ${ref} — track it on the Orders page of your dashboard.`);
       form.reset();
       if (qtyEl) qtyEl.value = '1';
       refreshSummary();

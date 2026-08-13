@@ -13,7 +13,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { LiveProduct, LiveRfq } from '../src/lib/zvida-live';
 import { setLiveAccount, persistProduct, deleteProduct, fetchProducts, fetchOpenRfqs, persistRfq, sendSupportMessage, sendSupportReply, findUserByFullName, fetchMyMessages } from '../src/lib/zvida-live';
-import { supabase } from '../src/lib/supabase';
 import { invokeCreateContract, settleContract, assignDriverByName } from '../src/lib/backend';
 import { loadSettings, saveSettings } from '../src/lib/settings';
 import { notifyUser } from '../src/lib/notifications';
@@ -97,11 +96,13 @@ class FakeDB {
 /* Fake supabase client builder                                      */
 /* ------------------------------------------------------------------ */
 
-type DBHolder = { db: FakeDB; handlers: Record<string, (body: unknown) => Promise<{ data: any; error: any }>> } & { FakeDB: typeof FakeDB };
+type DBHolder = { db: FakeDB | null; handlers: Record<string, (body: unknown) => Promise<{ data: any; error: any }>> };
 
-const holder = vi.hoisted(() => {
-  const db = new FakeDB() as InstanceType<typeof FakeDB>;
-  return { db, handlers: {} as DBHolder['handlers'], FakeDB };
+/* The holder is hoisted before the module body runs, so it must not reference
+   the FakeDB class (classes are still in the temporal dead zone there). The
+   db instance is created lazily in beforeEach instead. */
+const holder = vi.hoisted((): DBHolder => {
+  return { db: null, handlers: {} };
 });
 
 function makeClient(h: DBHolder) {
@@ -226,7 +227,17 @@ function makeClient(h: DBHolder) {
     return q;
   };
 
-  return { from, functions: { invoke: async (name: string, opts?: { body: unknown }) => { const hnd = holder.handlers[name]; if (hnd) return hnd(opts?.body); return { data: { ok: true }, error: null }; } }, auth: { getSession: async () => ({ data: { session: null } }) } };
+  return {
+    from,
+    functions: {
+      invoke: async (name: string, opts?: { body: unknown }) => {
+        const hnd = holder.handlers[name];
+        if (hnd) return hnd(opts?.body);
+        return { data: { ok: true }, error: null };
+      },
+    },
+    auth: { getSession: async () => ({ data: { session: null } }) },
+  };
 }
 
 vi.mock('../src/lib/supabase', () => ({ supabase: makeClient(holder) }));
@@ -283,7 +294,7 @@ const maizeRfq: LiveRfq = {
 beforeEach(() => {
   vi.stubEnv('VITE_SUPABASE_URL', 'https://test.supabase.co');
   vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'test-anon-key');
-  holder.db = new holder.FakeDB();
+  holder.db = new FakeDB();
   holder.handlers = {};
   seedBase();
   setLiveAccount(null);
@@ -444,8 +455,8 @@ describe('cross-dashboard live data consistency', () => {
 
     setLiveAccount(OFFTAKER);
     const { fetchUnreadNotifications } = await import('../src/lib/zvida-live');
-    const unread = await fetchUnreadNotifications();
-    expect(Array.isArray(unread)).toBe(true);
-    expect(unread.some((n) => n.title === 'Delivery released')).toBe(true);
+    const { latest } = await fetchUnreadNotifications();
+    expect(Array.isArray(latest)).toBe(true);
+    expect(latest.some((n) => n.title === 'Delivery released')).toBe(true);
   });
 });

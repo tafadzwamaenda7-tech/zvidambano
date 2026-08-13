@@ -1150,7 +1150,31 @@ function mkLoad(): typeof marketStore {
     marketStore = mkSeed();
     mkSave();
   }
+  mergeDemoInbox(marketStore);
   return marketStore;
+}
+
+/* Orders placed on the marketing site (products.html) as a signed-in demo
+   account land in this inbox so the demo dashboard can surface them on the
+   Orders page — demo accounts never read Supabase, so a marketing order would
+   otherwise be invisible everywhere. */
+const DEMO_INBOX_KEY = 'zvida_demo_orders';
+
+function mergeDemoInbox(s: NonNullable<typeof marketStore>): void {
+  try {
+    const raw = localStorage.getItem(DEMO_INBOX_KEY);
+    if (!raw) return;
+    const inbox = JSON.parse(raw);
+    if (!Array.isArray(inbox) || !inbox.length) return;
+    const known = new Set(s.orders.map((o) => o.id));
+    const fresh = inbox.filter((o) => o && o.id && !known.has(o.id));
+    if (!fresh.length) return;
+    s.orders.push(...fresh);
+    localStorage.removeItem(DEMO_INBOX_KEY);
+    mkSave();
+  } catch {
+    /* ignore malformed inbox */
+  }
 }
 
 function mkSave(): void {
@@ -1753,6 +1777,46 @@ function lgSave(): void {
   }
 }
 
+export interface LoadSpec {
+  commodity: string;
+  art: string;
+  supplier: string;
+  receiver: string;
+  from: string;
+  dest: string;
+  unitPrice: number;
+  payTerm: string;
+  mode?: WeightMode;
+  driver?: string;
+  phone?: string;
+  truck?: string;
+  trailer?: string;
+}
+
+/** Create a pending consignment in the freight store (used by auto-match and
+    demo flows). Returns the new load's id. */
+export function lgCreateConsignment(s: LoadSpec): string {
+  const store = lgLoad()!;
+  const seq = ++store.seq;
+  const ref = 'LD-' + seq;
+  const id = 'lg' + seq;
+  const due = new Date(Date.now() + 21 * 86400000).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const load: Consignment = {
+    id, ref, contract: '#' + seq, poRef: 'PO-' + seq, order: 'SO-' + ref,
+    commodity: s.commodity, art: s.art, supplier: s.supplier, receiver: s.receiver,
+    from: s.from, dest: s.dest,
+    driver: s.driver || '', phone: s.phone || '', truck: s.truck || '', trailer: s.trailer || '',
+    weightMode: s.mode || 'weighbridge', bucketKg: 20, weight1: 0, weight2: 0, bags: 0, buckets: 0, inputKg: 0,
+    unitPrice: s.unitPrice, qty: 0, amount: 0, payTerm: s.payTerm,
+    status: 'PENDING', tone: 'amber', step: 0, flow: [...LG_FLOW],
+    history: [{ t: 'Pending', d: 'Created from auto-match' }],
+    due, slip: '', pics: 0, live: 0, photos: [],
+  };
+  store.loads.unshift(load);
+  lgSave();
+  return id;
+}
+
 export function loadCatalog(): Consignment[] {
   return [...lgLoad()!.loads];
 }
@@ -1885,10 +1949,10 @@ function lgTransition(l: Consignment, action: string, note: string): void {
     case 'deliver':
       if (l.status === 'OFFLOADING') {
         if ((l.payTerm === 'COD' || l.payTerm === 'COC') && l.qty) {
-          set('PAID', 7, 'Delivery confirmed — payment released', `Signed off · $loadMoney(l.amount)} auto-paid to $l.supplier}`);
+          set('PAID', 7, 'Delivery confirmed — payment released', `Signed off · ${loadMoney(l.amount)} auto-paid to ${l.supplier}`);
           syncAction = 'settle';
         } else {
-          set('PENDING_PAYMENT', 6, 'Delivery confirmed', note || `Signed off · $loadTermNote(l)}`);
+          set('PENDING_PAYMENT', 6, 'Delivery confirmed', note || `Signed off · ${loadTermNote(l)}`);
         }
       }
       break;case 'settle':
@@ -2220,11 +2284,12 @@ export function wireToasts(root: HTMLElement): void {
     }
   };
 
-  root.addEventListener('click', (e) => {
+  document.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
 
-    const modal = target.closest<HTMLElement>('[data-modal-close], [data-modal-mask]');
-    if (modal) {
+    const modalClose = target.closest<HTMLElement>('[data-modal-close]');
+    const onMask = target.closest<HTMLElement>('[data-modal-mask]');
+    if (modalClose || (onMask && !target.closest('.dsh-modal'))) {
       e.preventDefault();
       closeModal();
       return;
@@ -2255,8 +2320,9 @@ export function wireToasts(root: HTMLElement): void {
       return;
     }
 
-    const dc = target.closest<HTMLElement>('[data-drawer-close], [data-drawer-mask]');
-    if (dc) {
+    const drawerClose = target.closest<HTMLElement>('[data-drawer-close]');
+    const onDrawerMask = target.closest<HTMLElement>('[data-drawer-mask]');
+    if (drawerClose || (onDrawerMask && !target.closest('.dsh-drawer'))) {
       e.preventDefault();
       closeDetail();
       return;
@@ -2448,7 +2514,7 @@ export function wireToasts(root: HTMLElement): void {
     }
   });
 
-  root.addEventListener('keydown', (e) => {
+  document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       closeDetail();
       closeModal();
@@ -2694,7 +2760,7 @@ export function onValidSubmit(key: string, fn: (form: HTMLElement) => void): voi
 }
 
 export function wireForms(root: HTMLElement): void {
-  root.addEventListener('input', (e) => {
+  document.addEventListener('input', (e) => {
     const t = e.target as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
     if (!t || !t.isConnected || !t.closest('[data-form]')) return;
     const form = t.closest<HTMLElement>('[data-form]')!;
@@ -2731,14 +2797,14 @@ export function wireForms(root: HTMLElement): void {
     }
     updateSubmit(form);
   });
-  root.addEventListener('submit', (e) => {
+  document.addEventListener('submit', (e) => {
     const form = (e.target as HTMLElement).closest<HTMLElement>('[data-form]');
     if (form) {
       e.preventDefault();
       beginSubmit(form);
     }
   });
-  root.addEventListener('click', (e) => {
+  document.addEventListener('click', (e) => {
     const b = (e.target as HTMLElement).closest<HTMLElement>('[data-submit]');
     if (b) {
       e.preventDefault();
@@ -5045,6 +5111,7 @@ export function boot(cfg: RoleCfg): void {
     try {
       localStorage.removeItem(MK_KEY);
       localStorage.removeItem(LG_KEY);
+      localStorage.removeItem(DEMO_INBOX_KEY);
     } catch {
       /* ignore */
     }
@@ -5103,7 +5170,17 @@ export function boot(cfg: RoleCfg): void {
     closeSidebar();
   };
 
-  sidebar.querySelectorAll('.dsh-link').forEach((a) => a.addEventListener('click', () => render((a as HTMLElement).dataset.page || '')));
+  sidebar.querySelectorAll('.dsh-link').forEach((a) =>
+    a.addEventListener('click', (e) => {
+      /* Render once: stop the default hash navigation so the hashchange
+         listener (which would render a second time) never fires, then sync
+         the hash without triggering it again. */
+      e.preventDefault();
+      const id = (a as HTMLElement).dataset.page || '';
+      render(id);
+      history.replaceState(null, '', '#' + id);
+    })
+  );
   window.addEventListener('hashchange', () => render(window.location.hash.slice(1)));
 
   const initial = window.location.hash.slice(1);

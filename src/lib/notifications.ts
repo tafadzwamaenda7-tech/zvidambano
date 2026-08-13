@@ -25,8 +25,11 @@ export async function notifyUser(
   type: string = 'info',
   options?: { email?: boolean; sms?: boolean; phone?: string; url?: string }
 ) {
+  /* Demo mode (no Supabase credentials): skip quietly instead of firing a
+     batch of failing network requests on every notifyUser call. */
+  if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) return;
   try {
-    await supabase.from('notifications').insert({ user_id: userId, title, body, type });
+    await supabase.from('notifications').insert({ user_id: userId, title, body, type, read: false });
   } catch (err) {
     console.error('[Notifications] In-app failed:', err);
   }

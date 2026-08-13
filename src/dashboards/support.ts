@@ -40,17 +40,17 @@ JS.replyTicket = async () => {
     return;
   }
   if (!isLiveMode()) {
-    toast(img ? 'Reply sent with attachment â€” the user will be notified' : 'Reply sent â€” the user will be notified');
+    toast(img ? 'Reply sent with attachment — the user will be notified' : 'Reply sent — the user will be notified');
     return;
   }
-  const name = ticket.split('â€”').pop()?.trim().replace(/\s*\(.*\)$/, '') || '';
+  const name = ticket.split('—').pop()?.trim().replace(/\s*\(.*\)$/, '') || '';
   const receiver = await findUserByFullName(name);
   if (!receiver) {
-    toast('Could not find that user in the live directory â€” reply not sent', 'error');
+    toast('Could not find that user in the live directory — reply not sent', 'error');
     return;
   }
   const sent = await sendSupportReply(body, receiver);
-  if (sent) toast(img ? 'Reply sent with attachment â€” the user will be notified' : 'Reply sent â€” the user will be notified');
+  if (sent) toast(img ? 'Reply sent with attachment — the user will be notified' : 'Reply sent — the user will be notified');
   else toast('Could not send the reply', 'error');
 };
 JS.openResolution = () => {
