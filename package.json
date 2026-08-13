@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "node ./node_modules/typescript/bin/tsc && vite build && node ./node_modules/typescript/bin/tsc -p tsconfig.sw.json",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "keep-alive": "node --env-file=.env scripts/keep-alive.mjs"
   },
   "engines": {
     "node": ">=22.0.0"
