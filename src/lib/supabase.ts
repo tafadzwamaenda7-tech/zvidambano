@@ -156,3 +156,24 @@ export function onAuthChange(callback: (session: Session | null) => void) {
     callback(session);
   });
 }
+
+// "Remember me" preference — persisted locally, defaults to on.
+const REMEMBER_KEY = 'zvida_remember';
+
+export function getRemember(): boolean {
+  if (typeof window === 'undefined') return true;
+  try {
+    return window.localStorage.getItem(REMEMBER_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export function setRemember(remember: boolean): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(REMEMBER_KEY, remember ? 'true' : 'false');
+  } catch {
+    // Storage unavailable (private mode, quota) — preference is non-critical.
+  }
+}
